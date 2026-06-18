@@ -535,7 +535,9 @@ func (a *APIv3Handler) action(c *gin.Context) {
 }
 
 func (a *APIv3Handler) linkConvert(c *gin.Context) {
-	var body struct{ Link string `json:"link"` }
+	var body struct {
+		Link string `json:"link"`
+	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		v3Error(c, http.StatusBadRequest, err)
 		return
@@ -549,7 +551,9 @@ func (a *APIv3Handler) linkConvert(c *gin.Context) {
 }
 
 func (a *APIv3Handler) subConvert(c *gin.Context) {
-	var body struct{ Link string `json:"link"` }
+	var body struct {
+		Link string `json:"link"`
+	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		v3Error(c, http.StatusBadRequest, err)
 		return
