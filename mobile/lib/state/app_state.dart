@@ -6,9 +6,7 @@ import '../core/connection_profile.dart';
 
 class AppState extends ChangeNotifier {
   static const _profileKey = 'sui.connection.profile.v1';
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-  );
+  static const _storage = FlutterSecureStorage(aOptions: AndroidOptions());
 
   ConnectionProfile? profile;
   ApiClient? api;
