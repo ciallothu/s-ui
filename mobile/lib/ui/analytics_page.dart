@@ -305,7 +305,11 @@ class _TrafficPainter extends CustomPainter {
       final traffic = _int(values[index]['traffic']);
       final x = maxTime == minTime ? size.width / 2 : (time - minTime) / (maxTime - minTime) * size.width;
       final y = size.height - (traffic / maxTraffic * size.height);
-      if (index == 0) path.moveTo(x, y); else path.lineTo(x, y);
+      if (index == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
     }
     canvas.drawPath(path, paint);
   }
