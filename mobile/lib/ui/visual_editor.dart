@@ -317,7 +317,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                   decoration: InputDecoration(labelText: label, helperText: '$key · 每行一项', alignLabelWithHint: true),
                   onChanged: (next) {
                     final lines = next.split('\n').map((item) => item.trim()).where((item) => item.isNotEmpty);
-                    parent[key] = [for (final line in lines) schema.parseListItem(list, line)];
+                    parent[key] = [for (final line in lines) schema.parseListItem(list, path, line)];
                   },
                 ),
               ),
@@ -561,9 +561,13 @@ class VisualEditorSchema {
     return next;
   }
 
-  dynamic parseListItem(List<dynamic> oldList, String next) {
+  dynamic parseListItem(List<dynamic> oldList, String path, String next) {
     if (oldList.isNotEmpty && oldList.first is int) return int.tryParse(next) ?? 0;
     if (oldList.isNotEmpty && oldList.first is double) return double.tryParse(next) ?? 0;
+    final key = path.split('.').last;
+    if (const {'inbounds', 'source_port', 'port', 'user_id', 'reserved', 'exclude_uid', 'include_uid', 'include_android_user'}.contains(key)) {
+      return int.tryParse(next) ?? 0;
+    }
     return next;
   }
 

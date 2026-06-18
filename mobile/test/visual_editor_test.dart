@@ -34,4 +34,9 @@ void main() {
     expect((client['config'] as Map)['mixed']['username'], 'new-user');
     expect((client['config'] as Map)['vless']['name'], 'new-user');
   });
+
+  test('empty numeric lists keep numeric values', () {
+    final schema = VisualEditorSchema.forResource('clients');
+    expect(schema.parseListItem(<dynamic>[], 'inbounds', '12'), 12);
+  });
 }
