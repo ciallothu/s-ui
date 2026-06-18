@@ -36,7 +36,7 @@ func GetDb(exclude string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	dbPath := dir + config.GetName() + "_" + time.Now().Format("20060102-200203") + ".db"
+	dbPath := filepath.Join(dir, config.GetName()+"_"+time.Now().Format("20060102-200203")+".db")
 
 	backupDb, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
@@ -55,7 +55,9 @@ func GetDb(exclude string) ([]byte, error) {
 		&model.Inbound{},
 		&model.Outbound{},
 		&model.Endpoint{},
+		&model.Service{},
 		&model.User{},
+		&model.Tokens{},
 		&model.Stats{},
 		&model.Client{},
 		&model.Changes{},
@@ -69,7 +71,9 @@ func GetDb(exclude string) ([]byte, error) {
 	var inbound []model.Inbound
 	var outbound []model.Outbound
 	var endpoint []model.Endpoint
+	var services []model.Service
 	var users []model.User
+	var tokens []model.Tokens
 	var clients []model.Client
 	var stats []model.Stats
 	var changes []model.Changes
@@ -110,10 +114,24 @@ func GetDb(exclude string) ([]byte, error) {
 			return nil, err
 		}
 	}
+	if err := db.Model(&model.Service{}).Scan(&services).Error; err != nil {
+		return nil, err
+	} else if len(services) > 0 {
+		if err := backupDb.Save(services).Error; err != nil {
+			return nil, err
+		}
+	}
 	if err := db.Model(&model.User{}).Scan(&users).Error; err != nil {
 		return nil, err
 	} else if len(users) > 0 {
 		if err := backupDb.Save(users).Error; err != nil {
+			return nil, err
+		}
+	}
+	if err := db.Model(&model.Tokens{}).Scan(&tokens).Error; err != nil {
+		return nil, err
+	} else if len(tokens) > 0 {
+		if err := backupDb.Save(tokens).Error; err != nil {
 			return nil, err
 		}
 	}

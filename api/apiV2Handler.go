@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/alireza0/s-ui/logger"
@@ -18,7 +20,8 @@ type TokenInMemory struct {
 
 type APIv2Handler struct {
 	ApiService
-	tokens *[]TokenInMemory
+	tokens  []TokenInMemory
+	tokensM sync.RWMutex
 }
 
 func NewAPIv2Handler(g *gin.RouterGroup) *APIv2Handler {
@@ -96,10 +99,25 @@ func (a *APIv2Handler) getHandler(c *gin.Context) {
 }
 
 func (a *APIv2Handler) findUsername(c *gin.Context) string {
-	token := c.Request.Header.Get("Token")
-	for index, t := range *a.tokens {
-		if t.Expiry > 0 && t.Expiry < time.Now().Unix() {
-			(*a.tokens) = append((*a.tokens)[:index], (*a.tokens)[index+1:]...)
+	token := strings.TrimSpace(c.Request.Header.Get("Token"))
+	if authorization := strings.TrimSpace(c.Request.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		token = strings.TrimSpace(authorization[7:])
+	}
+	if token == "" {
+		token = strings.TrimSpace(c.Request.Header.Get("X-API-Token"))
+	}
+	return a.findUsernameByToken(token)
+}
+
+func (a *APIv2Handler) findUsernameByToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	now := time.Now().Unix()
+	a.tokensM.RLock()
+	defer a.tokensM.RUnlock()
+	for _, t := range a.tokens {
+		if t.Expiry > 0 && t.Expiry < now {
 			continue
 		}
 		if t.Token == token {
@@ -127,7 +145,9 @@ func (a *APIv2Handler) ReloadTokens() {
 		if err != nil {
 			logger.Error("unable to load tokens: ", err)
 		}
-		a.tokens = &newTokens
+		a.tokensM.Lock()
+		a.tokens = newTokens
+		a.tokensM.Unlock()
 	} else {
 		logger.Error("unable to load tokens: ", err)
 	}

@@ -1,0 +1,579 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/alireza0/s-ui/config"
+	"github.com/alireza0/s-ui/database"
+	"github.com/alireza0/s-ui/logger"
+	"github.com/alireza0/s-ui/service"
+	"github.com/alireza0/s-ui/util"
+	"github.com/alireza0/s-ui/util/common"
+
+	"github.com/gin-gonic/gin"
+)
+
+// APIv3Handler is the stable, JSON-first API consumed by the mobile app. It
+// intentionally sits beside the legacy web APIs so existing installations and
+// third-party scripts keep working.
+type APIv3Handler struct {
+	ApiService
+	apiv2 *APIv2Handler
+}
+
+type apiV3Response struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+}
+
+type resourceMutation struct {
+	Action    string          `json:"action"`
+	Data      json.RawMessage `json:"data"`
+	InitUsers []uint          `json:"initUsers,omitempty"`
+}
+
+func NewAPIv3Handler(g *gin.RouterGroup, apiv2 *APIv2Handler) *APIv3Handler {
+	a := &APIv3Handler{apiv2: apiv2}
+	a.initRouter(g)
+	return a
+}
+
+func (a *APIv3Handler) initRouter(g *gin.RouterGroup) {
+	g.POST("/auth/login", a.login)
+
+	protected := g.Group("")
+	protected.Use(a.checkToken)
+	protected.GET("/meta", a.meta)
+	protected.GET("/me", a.me)
+	protected.DELETE("/auth/token", a.logout)
+	protected.GET("/bootstrap", a.bootstrap)
+
+	protected.GET("/resources/:resource", a.getResource)
+	protected.POST("/resources/:resource", a.saveResource)
+
+	protected.GET("/status", a.status)
+	protected.GET("/onlines", a.onlines)
+	protected.GET("/analytics/stats", a.stats)
+	protected.GET("/analytics/usage", a.usage)
+	protected.GET("/logs", a.logs)
+	protected.GET("/changes", a.changes)
+
+	protected.GET("/users", a.users)
+	protected.PATCH("/users/:id", a.changeCredentials)
+	protected.GET("/tokens", a.tokens)
+	protected.POST("/tokens", a.addToken)
+	protected.DELETE("/tokens/:id", a.deleteToken)
+
+	protected.GET("/backup/database", a.downloadDatabase)
+	protected.POST("/backup/database", a.importDatabase)
+	protected.GET("/backup/singbox", a.downloadSingboxConfig)
+
+	protected.POST("/actions/:action", a.action)
+	protected.POST("/tools/link-convert", a.linkConvert)
+	protected.POST("/tools/sub-convert", a.subConvert)
+	protected.POST("/tools/keypair", a.keypair)
+	protected.GET("/tools/check-outbound", a.checkOutbound)
+}
+
+func v3OK(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusOK, apiV3Response{Success: true, Data: data})
+}
+
+func v3Error(c *gin.Context, status int, err error) {
+	if status < 400 {
+		status = http.StatusBadRequest
+	}
+	c.JSON(status, apiV3Response{Success: false, Error: err.Error()})
+}
+
+func queryInt(c *gin.Context, key string, fallback int) int {
+	value, err := strconv.Atoi(c.Query(key))
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func queryInt64(c *gin.Context, key string) int64 {
+	value, _ := strconv.ParseInt(c.Query(key), 10, 64)
+	return value
+}
+
+func (a *APIv3Handler) checkToken(c *gin.Context) {
+	username := a.apiv2.findUsername(c)
+	if username == "" {
+		v3Error(c, http.StatusUnauthorized, common.NewError("invalid or expired API token"))
+		c.Abort()
+		return
+	}
+	c.Set("apiUsername", username)
+	c.Next()
+}
+
+func apiUsername(c *gin.Context) string {
+	username, _ := c.Get("apiUsername")
+	value, _ := username.(string)
+	return value
+}
+
+func requestToken(c *gin.Context) string {
+	authorization := strings.TrimSpace(c.GetHeader("Authorization"))
+	if strings.HasPrefix(strings.ToLower(authorization), "bearer ") {
+		return strings.TrimSpace(authorization[7:])
+	}
+	if token := strings.TrimSpace(c.GetHeader("Token")); token != "" {
+		return token
+	}
+	return strings.TrimSpace(c.GetHeader("X-API-Token"))
+}
+
+func (a *APIv3Handler) login(c *gin.Context) {
+	var body struct {
+		Username   string `json:"username" form:"username"`
+		Password   string `json:"password" form:"password"`
+		ExpiryDays int64  `json:"expiryDays" form:"expiryDays"`
+	}
+	if err := c.ShouldBind(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	if body.Username == "" || body.Password == "" {
+		v3Error(c, http.StatusBadRequest, common.NewError("username and password are required"))
+		return
+	}
+	username, err := a.UserService.Login(body.Username, body.Password, getRemoteIp(c))
+	if err != nil {
+		v3Error(c, http.StatusUnauthorized, err)
+		return
+	}
+	if body.ExpiryDays < 0 {
+		body.ExpiryDays = 30
+	}
+	token, err := a.UserService.AddToken(username, body.ExpiryDays, "S-UI Mobile")
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	logger.Audit(username, "mobile API login")
+	v3OK(c, gin.H{"token": token, "username": username, "expiryDays": body.ExpiryDays})
+}
+
+func (a *APIv3Handler) logout(c *gin.Context) {
+	username := apiUsername(c)
+	if err := a.UserService.DeleteTokenValue(username, requestToken(c)); err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	logger.Audit(username, "mobile API token revoked")
+	v3OK(c, gin.H{"revoked": true})
+}
+
+func (a *APIv3Handler) meta(c *gin.Context) {
+	v3OK(c, gin.H{
+		"apiVersion": "3", "panelVersion": config.GetVersion(), "panelName": config.GetName(),
+		"features": []string{"resources", "usage-filter", "stats-filter", "structured-logs", "audit", "backup"},
+	})
+}
+
+func (a *APIv3Handler) me(c *gin.Context) {
+	v3OK(c, gin.H{"username": apiUsername(c)})
+}
+
+func (a *APIv3Handler) bootstrap(c *gin.Context) {
+	data, err := a.getData(c)
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	users, _ := a.UserService.GetUsers()
+	settings, _ := a.SettingService.GetAllSetting()
+	status := a.ServerService.GetStatus("cpu,mem,dsk,swp,net,sys,sbd,db")
+	v3OK(c, gin.H{"panel": data, "users": users, "settings": settings, "status": status, "username": apiUsername(c)})
+}
+
+func (a *APIv3Handler) resourceValue(resource, id string) (interface{}, error) {
+	switch resource {
+	case "inbounds":
+		return a.InboundService.Get(id)
+	case "clients":
+		return a.ClientService.Get(id)
+	case "outbounds":
+		return a.OutboundService.GetAll()
+	case "endpoints":
+		return a.EndpointService.GetAll()
+	case "services":
+		return a.ServicesService.GetAll()
+	case "tls":
+		return a.TlsService.GetAll()
+	case "settings":
+		return a.SettingService.GetAllSetting()
+	case "config":
+		value, err := a.SettingService.GetConfig()
+		if err != nil {
+			return nil, err
+		}
+		var decoded interface{}
+		if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+			return nil, err
+		}
+		return decoded, nil
+	default:
+		return nil, common.NewError("unknown resource: ", resource)
+	}
+}
+
+func (a *APIv3Handler) getResource(c *gin.Context) {
+	value, err := a.resourceValue(c.Param("resource"), c.Query("id"))
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) saveResource(c *gin.Context) {
+	resource := c.Param("resource")
+	var body resourceMutation
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	allowed := map[string]bool{"new": true, "edit": true, "del": true, "set": true, "addbulk": true, "editbulk": true, "delbulk": true}
+	if !allowed[body.Action] {
+		v3Error(c, http.StatusBadRequest, common.NewError("unsupported action: ", body.Action))
+		return
+	}
+	if resource != "clients" && strings.HasSuffix(body.Action, "bulk") {
+		a.saveResourceBulk(c, resource, body)
+		return
+	}
+	initUsers := make([]string, 0, len(body.InitUsers))
+	for _, id := range body.InitUsers {
+		initUsers = append(initUsers, strconv.FormatUint(uint64(id), 10))
+	}
+	changed, err := a.ConfigService.Save(resource, body.Action, body.Data, strings.Join(initUsers, ","), apiUsername(c), getHostname(c))
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	result := make(map[string]interface{}, len(changed))
+	for _, name := range changed {
+		value, valueErr := a.resourceValue(name, "")
+		if valueErr == nil {
+			result[name] = value
+		}
+	}
+	v3OK(c, gin.H{"changed": changed, "resources": result})
+}
+
+func (a *APIv3Handler) saveResourceBulk(c *gin.Context, resource string, body resourceMutation) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(body.Data, &items); err != nil {
+		v3Error(c, http.StatusBadRequest, common.NewError("bulk data must be a JSON array: ", err))
+		return
+	}
+	action := strings.TrimSuffix(body.Action, "bulk")
+	if action == "add" {
+		action = "new"
+	}
+	if action != "new" && action != "edit" && action != "del" {
+		v3Error(c, http.StatusBadRequest, common.NewError("unsupported bulk action: ", body.Action))
+		return
+	}
+	for index, item := range items {
+		if _, err := a.ConfigService.Save(resource, action, item, "", apiUsername(c), getHostname(c)); err != nil {
+			v3Error(c, http.StatusBadRequest, common.NewErrorf("bulk item %d failed: %v", index+1, err))
+			return
+		}
+	}
+	value, err := a.resourceValue(resource, "")
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, gin.H{"changed": []string{resource}, "resources": gin.H{resource: value}, "processed": len(items)})
+}
+
+func (a *APIv3Handler) status(c *gin.Context) {
+	request := c.Query("request")
+	if request == "" {
+		request = "cpu,mem,dsk,swp,net,sys,sbd,db"
+	}
+	v3OK(c, a.ServerService.GetStatus(request))
+}
+
+func (a *APIv3Handler) onlines(c *gin.Context) {
+	value, err := a.StatsService.GetOnlines()
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) stats(c *gin.Context) {
+	result, err := a.StatsService.QueryStats(service.StatsFilter{
+		Resource: c.Query("resource"), Tag: c.Query("tag"), Search: c.Query("search"),
+		Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
+		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 500),
+	})
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, result)
+}
+
+func (a *APIv3Handler) usage(c *gin.Context) {
+	result, err := a.StatsService.QueryUsage(service.UsageFilter{
+		User: c.Query("user"), Search: c.Query("search"), Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
+		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 100),
+	})
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, result)
+}
+
+func (a *APIv3Handler) changes(c *gin.Context) {
+	result, err := a.ConfigService.QueryChanges(service.ChangesFilter{
+		Actor: c.Query("user"), Key: c.Query("key"), Search: c.Query("search"),
+		Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
+		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 100),
+	})
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, result)
+}
+
+func (a *APIv3Handler) logs(c *gin.Context) {
+	level := strings.ToUpper(c.Query("level"))
+	start, end := queryInt64(c, "start"), queryInt64(c, "end")
+	user, search := c.Query("user"), c.Query("search")
+	offset, limit := queryInt(c, "offset", 0), queryInt(c, "limit", 100)
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+
+	systemEntries, _ := logger.QueryLogs(logger.LogQuery{
+		Level: level, User: user, Search: search, Start: start, End: end, Limit: 5000,
+	})
+	entries := append([]logger.LogEntry{}, systemEntries...)
+	if level == "" || level == "ALL" || level == "INFO" {
+		auditRows, err := a.ConfigService.QueryChanges(service.ChangesFilter{
+			Actor: user, Search: search, Start: start, End: end, Limit: 5000,
+		})
+		if err != nil {
+			v3Error(c, http.StatusInternalServerError, err)
+			return
+		}
+		for _, row := range auditRows.Items {
+			entries = append(entries, logger.LogEntry{
+				Timestamp: row.DateTime, Time: time.Unix(row.DateTime, 0).Format("2006/01/02 15:04:05"),
+				Level: "INFO", Message: fmt.Sprintf("%s %s: %s", row.Action, row.Key, strings.TrimSpace(string(row.Obj))),
+				User: row.Actor, Source: "audit",
+			})
+		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Timestamp > entries[j].Timestamp })
+	total := len(entries)
+	if offset > total {
+		offset = total
+	}
+	pageEnd := offset + limit
+	if pageEnd > total {
+		pageEnd = total
+	}
+	v3OK(c, gin.H{"items": entries[offset:pageEnd], "total": total, "offset": offset, "limit": limit})
+}
+
+func (a *APIv3Handler) users(c *gin.Context) {
+	value, err := a.UserService.GetUsers()
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) changeCredentials(c *gin.Context) {
+	var body struct {
+		OldPassword string `json:"oldPassword"`
+		Username    string `json:"username"`
+		Password    string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(body.Username) == "" || body.Password == "" {
+		v3Error(c, http.StatusBadRequest, common.NewError("new username and password are required"))
+		return
+	}
+	if err := a.UserService.ChangePass(c.Param("id"), body.OldPassword, strings.TrimSpace(body.Username), body.Password); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	logger.Audit(apiUsername(c), "changed administrator credentials for user id ", c.Param("id"))
+	v3OK(c, gin.H{"updated": true})
+}
+
+func (a *APIv3Handler) tokens(c *gin.Context) {
+	value, err := a.UserService.GetUserTokens(apiUsername(c))
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) addToken(c *gin.Context) {
+	var body struct {
+		Description string `json:"description"`
+		ExpiryDays  int64  `json:"expiryDays"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	if body.ExpiryDays < 0 {
+		v3Error(c, http.StatusBadRequest, common.NewError("expiryDays cannot be negative"))
+		return
+	}
+	token, err := a.UserService.AddToken(apiUsername(c), body.ExpiryDays, body.Description)
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	v3OK(c, gin.H{"token": token})
+}
+
+func (a *APIv3Handler) deleteToken(c *gin.Context) {
+	if err := a.UserService.DeleteUserToken(apiUsername(c), c.Param("id")); err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	v3OK(c, gin.H{"deleted": true})
+}
+
+func (a *APIv3Handler) downloadDatabase(c *gin.Context) {
+	value, err := database.GetDb(c.Query("exclude"))
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", "attachment; filename=s-ui_"+time.Now().Format("20060102-150405")+".db")
+	c.Data(http.StatusOK, "application/octet-stream", value)
+}
+
+func (a *APIv3Handler) importDatabase(c *gin.Context) {
+	file, _, err := c.Request.FormFile("db")
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	defer file.Close()
+	if err := database.ImportDB(file); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	a.apiv2.ReloadTokens()
+	logger.Audit(apiUsername(c), "restored database backup")
+	v3OK(c, gin.H{"imported": true})
+}
+
+func (a *APIv3Handler) downloadSingboxConfig(c *gin.Context) {
+	value, err := a.ConfigService.GetConfig("")
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.Header("Content-Disposition", "attachment; filename=config_"+time.Now().Format("20060102-150405")+".json")
+	c.Data(http.StatusOK, "application/json", *value)
+}
+
+func (a *APIv3Handler) action(c *gin.Context) {
+	username := apiUsername(c)
+	switch c.Param("action") {
+	case "restart-core":
+		if err := a.ConfigService.RestartCore(); err != nil {
+			v3Error(c, http.StatusInternalServerError, err)
+			return
+		}
+		logger.Audit(username, "restarted sing-box")
+	case "restart-panel":
+		if err := a.PanelService.RestartPanel(3 * time.Second); err != nil {
+			v3Error(c, http.StatusInternalServerError, err)
+			return
+		}
+		logger.Audit(username, "restarted S-UI panel")
+	default:
+		v3Error(c, http.StatusNotFound, common.NewError("unknown action"))
+		return
+	}
+	v3OK(c, gin.H{"accepted": true})
+}
+
+func (a *APIv3Handler) linkConvert(c *gin.Context) {
+	var body struct{ Link string `json:"link"` }
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	value, _, err := util.GetOutbound(body.Link, 0)
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) subConvert(c *gin.Context) {
+	var body struct{ Link string `json:"link"` }
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	value, err := util.GetExternalSub(body.Link)
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	v3OK(c, value)
+}
+
+func (a *APIv3Handler) keypair(c *gin.Context) {
+	var body struct {
+		Type    string `json:"type"`
+		Options string `json:"options"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	v3OK(c, a.ServerService.GenKeypair(body.Type, body.Options))
+}
+
+func (a *APIv3Handler) checkOutbound(c *gin.Context) {
+	v3OK(c, a.ConfigService.CheckOutbound(c.Query("tag"), c.Query("link")))
+}

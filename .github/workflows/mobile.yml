@@ -1,0 +1,161 @@
+name: Build S-UI Mobile
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+    paths:
+      - ".github/workflows/mobile.yml"
+      - "mobile/**"
+      - "api/**"
+      - "database/**"
+      - "service/**"
+      - "logger/**"
+      - "web/**"
+      - "go.mod"
+      - "go.sum"
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_CHANNEL: stable
+  MOBILE_PROJECT: sui_mobile
+  MOBILE_ORG: io.sui
+
+jobs:
+  backend-api:
+    name: Validate mobile API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Format check
+        run: |
+          files=$(gofmt -l api/apiHandler.go api/apiV2Handler.go api/apiV3Handler.go database/backup.go database/model/model.go logger/logger.go service/config.go service/queries.go service/stats.go service/user.go web/web.go)
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Test API packages
+        run: go test ./api ./service ./logger ./web
+
+  android-arm64:
+    name: Android arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Generate platform host and copy app source
+        run: |
+          flutter create --platforms=android --project-name "$MOBILE_PROJECT" --org "$MOBILE_ORG" "$RUNNER_TEMP/sui-mobile"
+          rm -rf "$RUNNER_TEMP/sui-mobile/lib" "$RUNNER_TEMP/sui-mobile/test"
+          cp -R mobile/. "$RUNNER_TEMP/sui-mobile/"
+          mkdir -p "$RUNNER_TEMP/sui-mobile/assets"
+          cp frontend/src/assets/logo.png "$RUNNER_TEMP/sui-mobile/assets/logo.png"
+          sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$RUNNER_TEMP/sui-mobile/android/app/src/main/AndroidManifest.xml"
+          sed -i 's/android:label="sui_mobile"/android:label="S-UI"/' "$RUNNER_TEMP/sui-mobile/android/app/src/main/AndroidManifest.xml"
+
+      - name: Resolve dependencies
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: |
+          flutter pub get
+          dart run flutter_launcher_icons
+
+      - name: Analyze and test
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Build Android arm64 APK
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: flutter build apk --release --target-platform android-arm64 --split-per-abi
+
+      - name: Upload Android arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: s-ui-android-arm64
+          path: ${{ runner.temp }}/sui-mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          retention-days: 30
+
+  iphone-arm64:
+    name: iPhone arm64 (unsigned)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+        with:
+          submodules: recursive
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Generate platform host and copy app source
+        run: |
+          flutter create --platforms=ios --project-name "$MOBILE_PROJECT" --org "$MOBILE_ORG" "$RUNNER_TEMP/sui-mobile"
+          rm -rf "$RUNNER_TEMP/sui-mobile/lib" "$RUNNER_TEMP/sui-mobile/test"
+          cp -R mobile/. "$RUNNER_TEMP/sui-mobile/"
+          mkdir -p "$RUNNER_TEMP/sui-mobile/assets"
+          cp frontend/src/assets/logo.png "$RUNNER_TEMP/sui-mobile/assets/logo.png"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$RUNNER_TEMP/sui-mobile/ios/Runner/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$RUNNER_TEMP/sui-mobile/ios/Runner/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName S-UI" "$RUNNER_TEMP/sui-mobile/ios/Runner/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName S-UI" "$RUNNER_TEMP/sui-mobile/ios/Runner/Info.plist"
+
+      - name: Resolve dependencies
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: |
+          flutter pub get
+          dart run flutter_launcher_icons
+
+      - name: Analyze and test
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: |
+          flutter analyze
+          flutter test
+
+      - name: Build iPhone arm64 without signing
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        working-directory: ${{ runner.temp }}/sui-mobile
+        run: |
+          mkdir -p build/ios/ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -qry s-ui-iphone-arm64-unsigned.ipa Payload
+
+      - name: Upload iPhone arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: s-ui-iphone-arm64-unsigned
+          path: ${{ runner.temp }}/sui-mobile/build/ios/ipa/s-ui-iphone-arm64-unsigned.ipa
+          retention-days: 30

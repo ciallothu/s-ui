@@ -40,6 +40,7 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.Login(c)
 	case "changePass":
 		a.ApiService.ChangePass(c)
+		a.apiv2.ReloadTokens()
 	case "save":
 		a.ApiService.Save(c, loginUser)
 	case "restartApp":

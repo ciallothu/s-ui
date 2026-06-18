@@ -1,6 +1,8 @@
 # S-UI
 **An Advanced Web Panel • Built on SagerNet/Sing-Box**
 
+> Mobile source is available in [`mobile/`](mobile/README.md). Android arm64 and unsigned iPhone arm64 artifacts are built remotely by the `Build S-UI Mobile` GitHub Actions workflow. The app uses the versioned `/apiv3` API and supports custom request headers, including Cloudflare Access Service Tokens.
+
 ![](https://img.shields.io/github/v/release/alireza0/s-ui.svg)
 ![S-UI Docker pull](https://img.shields.io/docker/pulls/alireza7/s-ui.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/alireza0/s-ui)](https://goreportcard.com/report/github.com/alireza0/s-ui)

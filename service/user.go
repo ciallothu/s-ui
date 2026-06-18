@@ -159,3 +159,19 @@ func (s *UserService) DeleteToken(id string) error {
 	db := database.GetDB()
 	return db.Model(model.Tokens{}).Where("id = ?", id).Delete(&model.Tokens{}).Error
 }
+
+// DeleteUserToken prevents one administrator token from deleting another
+// administrator's token by guessing its numeric id.
+func (s *UserService) DeleteUserToken(username string, id string) error {
+	db := database.GetDB()
+	return db.Model(model.Tokens{}).
+		Where("id = ? AND user_id = (SELECT id FROM users WHERE username = ?)", id, username).
+		Delete(&model.Tokens{}).Error
+}
+
+func (s *UserService) DeleteTokenValue(username string, token string) error {
+	db := database.GetDB()
+	return db.Model(model.Tokens{}).
+		Where("token = ? AND user_id = (SELECT id FROM users WHERE username = ?)", token, username).
+		Delete(&model.Tokens{}).Error
+}

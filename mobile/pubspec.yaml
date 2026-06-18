@@ -1,0 +1,36 @@
+name: sui_mobile
+description: Native mobile administration client for the S-UI sing-box panel.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  cross_file: ^0.3.4+2
+  dio: ^5.8.0+1
+  file_picker: ^8.1.7
+  flutter_secure_storage: ^9.2.4
+  intl: ^0.20.2
+  path_provider: ^2.1.5
+  provider: ^6.1.2
+  qr_flutter: ^4.1.0
+  share_plus: ^10.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.3
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/logo.png
+  remove_alpha_ios: true

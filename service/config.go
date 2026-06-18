@@ -279,19 +279,11 @@ func (s *ConfigService) CheckChanges(lu string) (bool, error) {
 }
 
 func (s *ConfigService) GetChanges(actor string, chngKey string, count string) []model.Changes {
-	c, _ := strconv.Atoi(count)
-	whereString := "`id`>0"
-	if len(actor) > 0 {
-		whereString += " and `actor`='" + actor + "'"
-	}
-	if len(chngKey) > 0 {
-		whereString += " and `key`='" + chngKey + "'"
-	}
-	db := database.GetDB()
-	var chngs []model.Changes
-	err := db.Model(model.Changes{}).Where(whereString).Order("`id` desc").Limit(c).Scan(&chngs).Error
+	limit, _ := strconv.Atoi(count)
+	result, err := s.QueryChanges(ChangesFilter{Actor: actor, Key: chngKey, Limit: limit})
 	if err != nil {
 		logger.Warning(err)
+		return []model.Changes{}
 	}
-	return chngs
+	return result.Items
 }

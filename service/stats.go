@@ -2,6 +2,7 @@ package service
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/alireza0/s-ui/database"
@@ -17,6 +18,7 @@ type onlines struct {
 }
 
 var onlineResources = &onlines{}
+var onlineResourcesM sync.RWMutex
 
 type StatsService struct {
 }
@@ -35,12 +37,12 @@ func (s *StatsService) SaveStats(enableTraffic bool) error {
 	}
 	stats := st.GetStats()
 
-	// Reset onlines
-	onlineResources.Inbound = nil
-	onlineResources.Outbound = nil
-	onlineResources.User = nil
+	currentOnline := onlines{}
 
 	if len(*stats) == 0 {
+		onlineResourcesM.Lock()
+		*onlineResources = currentOnline
+		onlineResourcesM.Unlock()
 		return nil
 	}
 
@@ -71,14 +73,17 @@ func (s *StatsService) SaveStats(enableTraffic bool) error {
 		if stat.Direction {
 			switch stat.Resource {
 			case "inbound":
-				onlineResources.Inbound = append(onlineResources.Inbound, stat.Tag)
+				currentOnline.Inbound = append(currentOnline.Inbound, stat.Tag)
 			case "outbound":
-				onlineResources.Outbound = append(onlineResources.Outbound, stat.Tag)
+				currentOnline.Outbound = append(currentOnline.Outbound, stat.Tag)
 			case "user":
-				onlineResources.User = append(onlineResources.User, stat.Tag)
+				currentOnline.User = append(currentOnline.User, stat.Tag)
 			}
 		}
 	}
+	onlineResourcesM.Lock()
+	*onlineResources = currentOnline
+	onlineResourcesM.Unlock()
 
 	if !enableTraffic {
 		return nil
@@ -154,7 +159,13 @@ func (s *StatsService) downsampleStats(stats []model.Stats, maxRows int) []model
 }
 
 func (s *StatsService) GetOnlines() (onlines, error) {
-	return *onlineResources, nil
+	onlineResourcesM.RLock()
+	defer onlineResourcesM.RUnlock()
+	return onlines{
+		Inbound:  append([]string(nil), onlineResources.Inbound...),
+		User:     append([]string(nil), onlineResources.User...),
+		Outbound: append([]string(nil), onlineResources.Outbound...),
+	}, nil
 }
 func (s *StatsService) DelOldStats(days int) error {
 	oldTime := time.Now().AddDate(0, 0, -(days)).Unix()
