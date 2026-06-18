@@ -70,7 +70,7 @@ class _ToolsPageState extends State<ToolsPage> {
   }
 
   Future<void> restoreDatabase() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: const ['db']);
+    final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: const ['db']);
     final path = result?.files.single.path;
     if (path == null) return;
     if (!mounted || !await confirm(context, title: '恢复数据库', message: '恢复会替换当前面板数据库，请先确认已有可用备份。', action: '恢复')) return;
