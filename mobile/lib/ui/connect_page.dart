@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_localizations.dart';
+import '../core/app_locale_context.dart';
 import '../core/connection_profile.dart';
 import '../state/app_state.dart';
+import 'widgets.dart';
 
 class ConnectPage extends StatefulWidget {
   const ConnectPage({super.key});
@@ -12,7 +15,7 @@ class ConnectPage extends StatefulWidget {
 }
 
 class _ConnectPageState extends State<ConnectPage> {
-  final name = TextEditingController(text: '我的 S-UI');
+  final name = TextEditingController();
   final url = TextEditingController();
   final token = TextEditingController();
   final username = TextEditingController();
@@ -66,7 +69,7 @@ class _ConnectPageState extends State<ConnectPage> {
   }
 
   ConnectionProfile buildProfile() => ConnectionProfile(
-        name: name.text.trim().isEmpty ? '我的 S-UI' : name.text.trim(),
+        name: name.text.trim().isEmpty ? context.tr('connect.defaultName') : name.text.trim(),
         baseUrl: url.text.trim(),
         token: token.text.trim(),
         headers: {
@@ -117,45 +120,53 @@ class _ConnectPageState extends State<ConnectPage> {
                   child: Icon(Icons.shield_outlined, size: 36, color: colors.onPrimaryContainer),
                 ),
                 const SizedBox(height: 16),
-                Text('连接 S-UI', textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(context.t('connect.title'), textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
-                Text('连接信息与令牌仅保存在系统安全存储中', textAlign: TextAlign.center, style: TextStyle(color: colors.onSurfaceVariant)),
+                Text(context.t('connect.subtitle'), textAlign: TextAlign.center, style: TextStyle(color: colors.onSurfaceVariant)),
                 const SizedBox(height: 24),
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(
                       children: [
-                        TextField(controller: name, decoration: const InputDecoration(labelText: '连接名称', prefixIcon: Icon(Icons.bookmark_outline))),
+                        AnchoredSelect<String>(
+                          value: state.localeCode,
+                          label: context.t('common.language'),
+                          prefixIcon: const Icon(Icons.translate),
+                          options: [for (final language in AppLocalizations.languages) SelectOption(language.code, language.label)],
+                          onChanged: state.setLocale,
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(controller: name, decoration: InputDecoration(labelText: context.t('connect.name'), prefixIcon: const Icon(Icons.bookmark_outline))),
                         const SizedBox(height: 12),
                         TextField(
                           controller: url,
                           keyboardType: TextInputType.url,
                           autocorrect: false,
-                          decoration: const InputDecoration(
-                            labelText: '面板地址（包含 Web Path）',
+                          decoration: InputDecoration(
+                            labelText: context.t('connect.panelUrl'),
                             hintText: 'https://panel.example.com/app/',
-                            prefixIcon: Icon(Icons.link),
+                            prefixIcon: const Icon(Icons.link),
                           ),
                         ),
                         const SizedBox(height: 12),
                         SegmentedButton<bool>(
-                          segments: const [
-                            ButtonSegment(value: true, label: Text('账号登录'), icon: Icon(Icons.person_outline)),
-                            ButtonSegment(value: false, label: Text('API Token'), icon: Icon(Icons.key_outlined)),
+                          segments: [
+                            ButtonSegment(value: true, label: Text(context.t('connect.passwordLogin')), icon: const Icon(Icons.person_outline)),
+                            const ButtonSegment(value: false, label: Text('API Token'), icon: Icon(Icons.key_outlined)),
                           ],
                           selected: {useCredentials},
                           onSelectionChanged: (value) => setState(() => useCredentials = value.first),
                         ),
                         const SizedBox(height: 12),
                         if (useCredentials) ...[
-                          TextField(controller: username, autocorrect: false, decoration: const InputDecoration(labelText: '管理员用户名', prefixIcon: Icon(Icons.person_outline))),
+                          TextField(controller: username, autocorrect: false, decoration: InputDecoration(labelText: context.t('connect.adminUsername'), prefixIcon: const Icon(Icons.person_outline))),
                           const SizedBox(height: 12),
                           TextField(
                             controller: password,
                             obscureText: obscurePassword,
                             decoration: InputDecoration(
-                              labelText: '管理员密码',
+                              labelText: context.t('connect.adminPassword'),
                               prefixIcon: const Icon(Icons.lock_outline),
                               suffixIcon: IconButton(
                                 icon: Icon(obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
@@ -170,9 +181,9 @@ class _ConnectPageState extends State<ConnectPage> {
 							  autofocus: true,
 							  keyboardType: TextInputType.number,
 							  autocorrect: false,
-							  decoration: const InputDecoration(
-								labelText: '两步验证码或恢复码',
-								prefixIcon: Icon(Icons.security_outlined),
+							  decoration: InputDecoration(
+								labelText: context.t('connect.secondFactor'),
+								prefixIcon: const Icon(Icons.security_outlined),
 							  ),
 							),
 						  ],
@@ -181,8 +192,8 @@ class _ConnectPageState extends State<ConnectPage> {
                         const SizedBox(height: 8),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: const Text('自定义请求 Header'),
-                          subtitle: const Text('已预置 Cloudflare Access Service Token 字段'),
+                          title: Text(context.t('connect.customHeaders')),
+                          subtitle: Text(context.t('connect.cfPreset')),
                           value: showAdvanced,
                           onChanged: (value) => setState(() => showAdvanced = value),
                         ),
@@ -192,11 +203,11 @@ class _ConnectPageState extends State<ConnectPage> {
                               padding: const EdgeInsets.only(bottom: 10),
                               child: Row(
                                 children: [
-                                  Expanded(child: TextField(controller: headers[index].key, autocorrect: false, decoration: const InputDecoration(labelText: 'Header 名称'))),
+                                  Expanded(child: TextField(controller: headers[index].key, autocorrect: false, decoration: InputDecoration(labelText: context.t('connect.headerName')))),
                                   const SizedBox(width: 8),
-                                  Expanded(child: TextField(controller: headers[index].value, obscureText: true, autocorrect: false, decoration: const InputDecoration(labelText: 'Header 值'))),
+                                  Expanded(child: TextField(controller: headers[index].value, obscureText: true, autocorrect: false, decoration: InputDecoration(labelText: context.t('connect.headerValue')))),
                                   IconButton(
-                                    tooltip: '删除',
+                                    tooltip: context.t('common.delete'),
                                     onPressed: headers.length <= 2
                                         ? null
                                         : () => setState(() {
@@ -209,7 +220,7 @@ class _ConnectPageState extends State<ConnectPage> {
                             ),
                           Align(
                             alignment: Alignment.centerLeft,
-                            child: TextButton.icon(onPressed: addHeader, icon: const Icon(Icons.add), label: const Text('添加 Header')),
+                            child: TextButton.icon(onPressed: addHeader, icon: const Icon(Icons.add), label: Text(context.t('connect.addHeader'))),
                           ),
                         ],
                         if (state.error != null) ...[
@@ -224,7 +235,7 @@ class _ConnectPageState extends State<ConnectPage> {
                             icon: state.busy
                                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                                 : const Icon(Icons.login),
-                            label: Text(state.busy ? '正在验证…' : '连接面板'),
+                            label: Text(state.busy ? context.t('connect.verifying') : context.t('connect.connect')),
                           ),
                         ),
                       ],
@@ -232,7 +243,7 @@ class _ConnectPageState extends State<ConnectPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text('建议仅通过 HTTPS 连接。使用 Cloudflare Zero Trust 时，请填写 CF-Access-Client-Id 与 CF-Access-Client-Secret。', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
+                Text(context.t('connect.httpsHint'), textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant)),
               ],
             ),
           ),

@@ -1,16 +1,21 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../core/api_client.dart';
+import '../core/app_localizations.dart';
 import '../core/connection_profile.dart';
 
 class AppState extends ChangeNotifier {
   static const _profileKey = 'sui.connection.profile.v1';
+  static const _localeKey = 'sui.locale.v1';
   static const _storage = FlutterSecureStorage(aOptions: AndroidOptions());
 
   ConnectionProfile? profile;
   ApiClient? api;
   Map<String, dynamic> bootstrap = {};
+  String localeCode = _initialLocale();
   bool restoring = true;
   bool busy = false;
   String? error;
@@ -22,10 +27,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       final raw = await _storage.read(key: _profileKey);
+      final storedLocale = await _storage.read(key: _localeKey);
+      if (storedLocale != null && storedLocale.isNotEmpty) {
+        localeCode = storedLocale;
+      }
       if (raw != null && raw.isNotEmpty) {
         final restored = ConnectionProfile.decode(raw);
         if (restored.token.isNotEmpty) {
-          final client = ApiClient(restored);
+          final client = ApiClient(restored, localeCode: localeCode);
           await client.get('me');
           profile = restored;
           api = client;
@@ -40,6 +49,12 @@ class AppState extends ChangeNotifier {
       restoring = false;
       notifyListeners();
     }
+  }
+
+  Future<void> setLocale(String code) async {
+    localeCode = code;
+    await _storage.write(key: _localeKey, value: code);
+    notifyListeners();
   }
 
   Future<void> connectWithToken(ConnectionProfile next) async {
@@ -61,12 +76,13 @@ class AppState extends ChangeNotifier {
         username: username,
         password: password,
         code: code,
+        localeCode: localeCode,
       );
 	  if (login['requires2FA'] == true) {
 		return true;
 	  }
       final token = login['token']?.toString() ?? '';
-      if (token.isEmpty) throw const ApiException('面板没有返回 API Token');
+      if (token.isEmpty) throw ApiException(AppLocalizations.tr(localeCode, 'error.noToken'));
       await _connect(next.copyWith(token: token), manageBusy: false);
 	  return false;
     } catch (exception) {
@@ -86,14 +102,14 @@ class AppState extends ChangeNotifier {
     }
     try {
       if (next.normalizedBaseUrl.isEmpty) {
-        throw const ApiException('请填写面板地址');
+        throw ApiException(AppLocalizations.tr(localeCode, 'error.urlRequired'));
       }
       final uri = Uri.tryParse(next.normalizedBaseUrl);
       if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-        throw const ApiException('面板地址格式无效，请包含 http:// 或 https://');
+        throw ApiException(AppLocalizations.tr(localeCode, 'error.urlInvalid'));
       }
-      if (next.token.trim().isEmpty) throw const ApiException('请填写 API Token');
-      final client = ApiClient(next);
+      if (next.token.trim().isEmpty) throw ApiException(AppLocalizations.tr(localeCode, 'error.tokenRequired'));
+      final client = ApiClient(next, localeCode: localeCode);
       await client.get('meta');
       profile = next.copyWith(baseUrl: next.normalizedBaseUrl);
       api = client;
@@ -173,4 +189,11 @@ class AppState extends ChangeNotifier {
     error = null;
     notifyListeners();
   }
+}
+
+String _initialLocale() {
+  final locale = ui.PlatformDispatcher.instance.locale;
+  if (locale.languageCode == 'zh') return locale.scriptCode == 'Hant' ? 'zhHant' : 'zhHans';
+  const supported = {'en', 'ja', 'fr', 'la', 'fa', 'vi', 'ru'};
+  return supported.contains(locale.languageCode) ? locale.languageCode : 'en';
 }

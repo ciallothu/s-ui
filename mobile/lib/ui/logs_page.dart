@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'widgets.dart';
 
@@ -80,15 +81,15 @@ class _LogsPageState extends State<LogsPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const PageHeader(title: '日志', subtitle: '统一检索系统日志与管理员变更记录'),
+        PageHeader(title: context.t('logs.title'), subtitle: context.t('logs.subtitle')),
         FilterCard(
           child: Column(
             children: [
-              Row(children: [Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: const InputDecoration(labelText: '全文搜索', prefixIcon: Icon(Icons.search)))), const SizedBox(width: 8), IconButton.filledTonal(onPressed: load, icon: const Icon(Icons.refresh))]),
+              Row(children: [Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('logs.fullText'), prefixIcon: const Icon(Icons.search)))), const SizedBox(width: 8), IconButton.filledTonal(onPressed: load, icon: const Icon(Icons.refresh))]),
               const SizedBox(height: 8),
-              Row(children: [Expanded(child: TextField(controller: user, onSubmitted: (_) => load(), decoration: const InputDecoration(labelText: '用户 / 管理员', prefixIcon: Icon(Icons.person_search_outlined)))), const SizedBox(width: 8), Expanded(child: DropdownButtonFormField<String>(initialValue: level, decoration: const InputDecoration(labelText: '级别'), items: const ['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR'].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(), onChanged: (value) { setState(() => level = value ?? 'ALL'); load(); }))]),
+              Row(children: [Expanded(child: TextField(controller: user, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('logs.user'), prefixIcon: const Icon(Icons.person_search_outlined)))), const SizedBox(width: 8), Expanded(child: AnchoredSelect<String>(value: level, label: context.t('logs.level'), options: [for (final value in const ['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR']) SelectOption(value, value)], onChanged: (value) { setState(() => level = value); load(); }))]),
               const SizedBox(height: 8),
-              Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(true), icon: const Icon(Icons.calendar_today_outlined), label: Text('起 ${_date(start)}'))), const SizedBox(width: 8), Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(false), icon: const Icon(Icons.event_outlined), label: Text('止 ${_date(end)}')))]),
+              Row(children: [Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(true), icon: const Icon(Icons.calendar_today_outlined), label: Text('${context.t('common.from')} ${_date(start)}'))), const SizedBox(width: 8), Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(false), icon: const Icon(Icons.event_outlined), label: Text('${context.t('common.to')} ${_date(end)}')))]),
             ],
           ),
         ),
@@ -97,14 +98,14 @@ class _LogsPageState extends State<LogsPage> {
           child: error != null
               ? EmptyState(label: error!, icon: Icons.error_outline)
               : items.isEmpty
-                  ? const EmptyState(label: '没有匹配的日志')
+                  ? EmptyState(label: context.t('logs.empty'))
                   : RefreshIndicator(
                       onRefresh: load,
                       child: ListView.builder(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
                         itemCount: items.length + 1,
                         itemBuilder: (context, index) {
-                          if (index == 0) return Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 8), child: Text('共 $total 条'));
+                          if (index == 0) return Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 8), child: Text(context.t('logs.count', args: {'count': total})));
                           return _logCard(Map<String, dynamic>.from(items[index - 1] as Map));
                         },
                       ),

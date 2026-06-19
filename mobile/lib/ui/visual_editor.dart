@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_locale_context.dart';
 import 'widgets.dart';
 
 enum _EditorMode { visual, json }
@@ -15,7 +16,7 @@ class VisualEditorDialog extends StatefulWidget {
     required this.resource,
     required this.initialValue,
     required this.onSave,
-    this.actionLabel = '保存',
+    this.actionLabel = '',
   });
 
   final String title;
@@ -57,7 +58,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
         value = jsonDecode(jsonController.text);
         error = null;
       } catch (exception) {
-        setState(() => error = 'JSON 格式错误：$exception');
+        setState(() => error = context.tr('editor.jsonError', args: {'error': exception}));
         return;
       }
     } else {
@@ -73,7 +74,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
       try {
         next = jsonDecode(jsonController.text);
       } catch (exception) {
-        setState(() => error = 'JSON 格式错误：$exception');
+        setState(() => error = context.tr('editor.jsonError', args: {'error': exception}));
         return;
       }
     }
@@ -106,7 +107,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
               icon: saving
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.save_outlined),
-              label: Text(widget.actionLabel),
+              label: Text(widget.actionLabel.isEmpty ? context.t('common.save') : widget.actionLabel),
             ),
           ],
         ),
@@ -116,9 +117,9 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
                 child: SegmentedButton<_EditorMode>(
-                  segments: const [
-                    ButtonSegment(value: _EditorMode.visual, icon: Icon(Icons.tune), label: Text('可视化')),
-                    ButtonSegment(value: _EditorMode.json, icon: Icon(Icons.data_object), label: Text('JSON')),
+                  segments: [
+                    ButtonSegment(value: _EditorMode.visual, icon: const Icon(Icons.tune), label: Text(context.t('editor.visual'))),
+                    const ButtonSegment(value: _EditorMode.json, icon: Icon(Icons.data_object), label: Text('JSON')),
                   ],
                   selected: {mode},
                   onSelectionChanged: (selection) => changeMode(selection.first),
@@ -150,7 +151,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                             padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
                             children: [
                               Text(
-                                '使用选项、开关和输入框编辑；未收录的新 sing-box 字段仍可通过“添加字段”或 JSON 模式维护。',
+                                context.t('editor.visualHint'),
                                 style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                               const SizedBox(height: 10),
@@ -158,7 +159,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                               _addFieldButton(value as Map, ''),
                             ],
                           )
-                        : const EmptyState(label: '可视化编辑需要 JSON 对象，请切换到 JSON 模式'),
+                        : EmptyState(label: context.t('editor.needObject')),
               ),
             ],
           ),
@@ -189,7 +190,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
 
   Widget _buildField(Map<dynamic, dynamic> parent, String key, dynamic fieldValue, String parentPath) {
     final path = parentPath.isEmpty ? key : '$parentPath.$key';
-    final label = schema.labelFor(key);
+    final label = context.fieldLabel(key);
     final options = schema.optionsFor(path, key, parent);
 
     if (schema.isStringBoolean(path, key, fieldValue)) {
@@ -228,7 +229,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
           initiallyExpanded: schema.expandByDefault(path),
           leading: const Icon(Icons.account_tree_outlined),
           title: Text(label),
-          subtitle: Text('$key · ${child.length} 个字段'),
+          subtitle: Text('$key · ${context.t('editor.fieldsCount', args: {'count': child.length})}'),
           trailing: _removeButton(parent, key),
           childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
           children: [..._buildMap(child, path), _addFieldButton(child, path)],
@@ -250,14 +251,13 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
           child: Row(
             children: [
               Expanded(
-                child: DropdownButtonFormField<String>(
+                child: AnchoredSelect<String>(
                   key: ValueKey('$path:$current'),
-                  initialValue: current,
-                  isExpanded: true,
-                  decoration: InputDecoration(labelText: label, helperText: key),
-                  items: [for (final option in values) DropdownMenuItem(value: option, child: Text(schema.optionLabel(option)))],
+                  value: current,
+                  label: label,
+                  helperText: key,
+                  options: [for (final option in values) SelectOption(option, schema.optionLabel(option))],
                   onChanged: (next) {
-                    if (next == null) return;
                     setState(() {
                       if (parentPath.isEmpty && key == 'type' && value is Map) {
                         schema.applyRootType(value as Map<String, dynamic>, next);
@@ -327,7 +327,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                   initialValue: current,
                   minLines: 2,
                   maxLines: 8,
-                  decoration: InputDecoration(labelText: label, helperText: '$key · 每行一项', alignLabelWithHint: true),
+                  decoration: InputDecoration(labelText: label, helperText: '$key · ${context.t('editor.onePerLine')}', alignLabelWithHint: true),
                   onChanged: (next) {
                     final lines = next.split('\n').map((item) => item.trim()).where((item) => item.isNotEmpty);
                     parent[key] = [for (final line in lines) schema.parseListItem(list, path, line)];
@@ -347,7 +347,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
         initiallyExpanded: list.length <= 3,
         leading: const Icon(Icons.view_list_outlined),
         title: Text(label),
-        subtitle: Text('$key · ${list.length} 项'),
+        subtitle: Text('$key · ${context.t('editor.itemsCount', args: {'count': list.length})}'),
         trailing: _removeButton(parent, key),
         childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         children: [
@@ -359,9 +359,9 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                   children: [
                     Row(
                       children: [
-                        Expanded(child: Text('${schema.singularLabel(key)} ${index + 1}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                        Expanded(child: Text('${context.singularFieldLabel(key)} ${index + 1}', style: const TextStyle(fontWeight: FontWeight.w700))),
                         IconButton(
-                          tooltip: '删除此项',
+                          tooltip: context.t('editor.deleteItem'),
                           onPressed: () => setState(() => list.removeAt(index)),
                           icon: const Icon(Icons.delete_outline),
                         ),
@@ -380,7 +380,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
             child: TextButton.icon(
               onPressed: () => setState(() => list.add(_copy(schema.listItemDefault(path)))),
               icon: const Icon(Icons.add),
-              label: Text('添加${schema.singularLabel(key)}'),
+              label: Text(context.t('editor.addItem', args: {'item': context.singularFieldLabel(key)})),
             ),
           ),
         ],
@@ -389,7 +389,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
   }
 
   Widget _removeButton(Map<dynamic, dynamic> parent, String key) => IconButton(
-        tooltip: '删除字段',
+        tooltip: context.t('editor.deleteField'),
         onPressed: () => setState(() => parent.remove(key)),
         icon: const Icon(Icons.remove_circle_outline),
       );
@@ -399,55 +399,58 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
         child: TextButton.icon(
           onPressed: () => _addField(parent, path),
           icon: const Icon(Icons.add_circle_outline),
-          label: const Text('添加字段'),
+          label: Text(context.t('editor.addField')),
         ),
       );
 
   Future<void> _addField(Map<dynamic, dynamic> parent, String path) async {
     final keyController = TextEditingController();
     var kind = 'text';
+    String? suggestedKey;
     final missing = schema.suggestedKeys(path).where((key) => !parent.containsKey(key)).toList();
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('添加配置字段'),
+          title: Text(context.t('editor.addConfigField')),
           content: SizedBox(
             width: 440,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (missing.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: '常用字段（可选）'),
-                    items: [for (final item in missing) DropdownMenuItem(value: item, child: Text('${schema.labelFor(item)} · $item'))],
+                  AnchoredSelect<String>(
+                    value: suggestedKey,
+                    label: context.t('editor.commonField'),
+                    options: [for (final item in missing) SelectOption(item, '${context.fieldLabel(item)} · $item')],
                     onChanged: (next) {
-                      if (next != null) keyController.text = next;
+                      setDialogState(() => suggestedKey = next);
+                      keyController.text = next;
                     },
                   ),
                 const SizedBox(height: 10),
-                TextField(controller: keyController, decoration: const InputDecoration(labelText: '字段名')),
+                TextField(controller: keyController, decoration: InputDecoration(labelText: context.t('editor.fieldName'))),
                 const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  initialValue: kind,
-                  decoration: const InputDecoration(labelText: '值类型'),
-                  items: const [
-                    DropdownMenuItem(value: 'text', child: Text('文本')),
-                    DropdownMenuItem(value: 'number', child: Text('数字')),
-                    DropdownMenuItem(value: 'bool', child: Text('开关')),
-                    DropdownMenuItem(value: 'object', child: Text('对象')),
-                    DropdownMenuItem(value: 'list', child: Text('列表')),
+                AnchoredSelect<String>(
+                  value: kind,
+                  label: context.t('editor.valueType'),
+                  options: [
+                    SelectOption('text', context.t('editor.text')),
+                    SelectOption('number', context.t('editor.number')),
+                    SelectOption('bool', context.t('editor.bool')),
+                    SelectOption('object', context.t('editor.object')),
+                    SelectOption('list', context.t('editor.list')),
                   ],
-                  onChanged: (next) => setDialogState(() => kind = next ?? kind),
+                  onChanged: (next) => setDialogState(() => kind = next),
                 ),
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(context.t('common.cancel'))),
             FilledButton(
               onPressed: () => Navigator.pop(dialogContext, {'key': keyController.text.trim(), 'kind': kind}),
-              child: const Text('添加'),
+              child: Text(context.t('common.confirm')),
             ),
           ],
         ),
@@ -491,39 +494,12 @@ class VisualEditorSchema {
     'services': ['derp', 'resolved', 'ssm-api', 'ocm', 'ccm'],
   };
 
-  static const _labels = <String, String>{
-    'id': 'ID', 'type': '类型', 'tag': '标签', 'name': '名称', 'enable': '启用', 'enabled': '启用',
-    'listen': '监听地址', 'listen_port': '端口', 'server': '服务器', 'server_port': '服务器端口', 'tls_id': 'TLS 模板',
-    'transport': '传输', 'tls': 'TLS', 'client': '客户端', 'config': '协议配置', 'inbounds': '入站', 'outbounds': '出站',
-    'volume': '流量配额', 'expiry': '到期时间', 'desc': '描述', 'group': '分组', 'delayStart': '延迟启动',
-    'autoReset': '自动重置', 'resetDays': '重置天数', 'nextReset': '下次重置', 'up': '上传', 'down': '下载',
-    'username': '用户名', 'user': '用户', 'password': '密码', 'uuid': 'UUID', 'flow': '流控', 'method': '加密方式',
-    'network': '网络', 'version': '版本', 'security': '安全选项', 'packet_encoding': '数据包编码', 'alter_id': 'Alter ID',
-    'address': '地址', 'private_key': '私钥', 'public_key': '公钥', 'pre_shared_key': '预共享密钥', 'allowed_ips': '允许的 IP',
-    'peers': 'Peer 列表', 'users': '用户列表', 'links': '链接', 'remark': '备注', 'uri': '链接地址',
-    'headers': '请求头', 'extra_headers': '额外请求头', 'path': '路径', 'domain': '域名', 'rules': '规则', 'rule_set': '规则集',
-    'action': '操作', 'mode': '逻辑模式', 'invert': '反选结果', 'final': '默认出站', 'strategy': '策略',
-    'level': '日志级别', 'output': '日志文件', 'timestamp': '时间戳', 'disabled': '禁用', 'experimental': '实验性功能',
-    'dns': 'DNS', 'route': '路由', 'log': '日志', 'ntp': 'NTP', 'servers': '服务器列表', 'format': '格式', 'url': 'URL',
-    'certificate': '证书内容', 'certificate_path': '证书路径', 'key': '密钥内容', 'key_path': '密钥路径', 'server_name': '服务器名称',
-    'insecure': '允许不安全', 'disable_sni': '禁用 SNI', 'alpn': 'ALPN', 'min_version': '最低 TLS 版本', 'max_version': '最高 TLS 版本',
-    'cipher_suites': '密码套件', 'curve_preferences': '曲线偏好', 'reality': 'Reality', 'acme': 'ACME', 'ech': 'ECH', 'utls': 'uTLS',
-    'multiplex': '多路复用', 'brutal': 'Brutal', 'padding': '填充', 'congestion_control': '拥塞控制', 'zero_rtt_handshake': '0-RTT',
-    'webListen': '面板监听地址', 'webPort': '面板端口', 'webPath': '面板路径', 'webDomain': '面板域名', 'webCertFile': '面板证书路径',
-    'webKeyFile': '面板密钥路径', 'webURI': '面板 URI', 'sessionMaxAge': '会话有效期', 'trafficAge': '流量保留天数', 'timeLocation': '时区',
-    'subListen': '订阅监听地址', 'subPort': '订阅端口', 'subPath': '订阅路径', 'subDomain': '订阅域名', 'subCertFile': '订阅证书路径',
-    'subKeyFile': '订阅密钥路径', 'subUpdates': '更新间隔', 'subEncode': '启用 Base64', 'subShowInfo': '启用用户信息', 'subURI': '订阅 URI',
-    'subJsonExt': 'JSON 订阅扩展', 'subClashExt': 'Clash 订阅扩展',
-  };
-
   static const _order = [
     'id', 'enable', 'enabled', 'type', 'tag', 'name', 'group', 'desc', 'listen', 'listen_port', 'server', 'server_port',
     'username', 'user', 'password', 'uuid', 'method', 'network', 'version', 'tls_id', 'transport', 'tls', 'multiplex',
     'config', 'inbounds', 'outbounds', 'links', 'volume', 'expiry', 'autoReset', 'resetDays', 'delayStart',
   ];
 
-  String labelFor(String key) => _labels[key] ?? key.replaceAll('_', ' ');
-  String singularLabel(String key) => const {'peers': 'Peer', 'users': '用户', 'links': '链接', 'rules': '规则', 'rule_set': '规则集', 'servers': '服务器'}[key] ?? '项目';
   String optionLabel(String option) => const {'ws': 'WebSocket', 'grpc': 'gRPC', 'httpupgrade': 'HTTP Upgrade', 'urltest': 'URL Test', 'ssm-api': 'SSM API'}[option] ?? option;
   int orderOf(String path, String key) {
     final index = _order.indexOf(key);

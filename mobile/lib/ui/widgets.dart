@@ -4,6 +4,93 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../core/app_locale_context.dart';
+
+const _selectMenuRadius = BorderRadius.all(Radius.circular(16));
+const _selectMenuMaxHeight = kMinInteractiveDimension * 4 + 8;
+
+class SelectOption<T> {
+  const SelectOption(this.value, this.label);
+
+  final T value;
+  final String label;
+}
+
+class AnchoredSelect<T> extends StatelessWidget {
+  const AnchoredSelect({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.label,
+    this.helperText,
+    this.prefixIcon,
+    this.compact = false,
+  });
+
+  final T? value;
+  final String? label;
+  final String? helperText;
+  final Widget? prefixIcon;
+  final List<SelectOption<T>> options;
+  final ValueChanged<T> onChanged;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    SelectOption<T>? selected;
+    for (final option in options) {
+      if (option.value == value) {
+        selected = option;
+        break;
+      }
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) => MenuAnchor(
+        crossAxisUnconstrained: false,
+        style: MenuStyle(
+          minimumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 0)),
+          maximumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, _selectMenuMaxHeight)),
+          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 4)),
+          shape: const WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: _selectMenuRadius)),
+        ),
+        builder: (context, controller, child) => InkWell(
+          borderRadius: _selectMenuRadius,
+          onTap: controller.isOpen ? controller.close : controller.open,
+          child: InputDecorator(
+            isEmpty: selected == null,
+            decoration: InputDecoration(
+              labelText: label,
+              helperText: helperText,
+              prefixIcon: prefixIcon,
+              isDense: compact,
+              border: compact ? InputBorder.none : null,
+              contentPadding: compact ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8) : null,
+            ),
+            child: Row(
+              mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
+              children: [
+                Flexible(child: Text(selected?.label ?? '', overflow: TextOverflow.ellipsis)),
+                const SizedBox(width: 4),
+                Icon(controller.isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down),
+              ],
+            ),
+          ),
+        ),
+        menuChildren: [
+          for (final option in options)
+            MenuItemButton(
+              leadingIcon: option.value == value ? const Icon(Icons.check, size: 18) : const SizedBox(width: 18),
+              onPressed: () => onChanged(option.value),
+              child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 String formatBytes(num? bytes, {int decimals = 1}) {
   final value = bytes?.toDouble() ?? 0;
   if (value <= 0) return '0 B';
@@ -41,7 +128,7 @@ Future<bool> confirm(
   BuildContext context, {
   required String title,
   required String message,
-  String action = '确认',
+  String action = '',
 }) async {
   return await showDialog<bool>(
         context: context,
@@ -49,8 +136,8 @@ Future<bool> confirm(
           title: Text(title),
           content: Text(message),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(action)),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(context.t('common.cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(action.isEmpty ? context.t('common.confirm') : action)),
           ],
         ),
       ) ??
@@ -133,7 +220,7 @@ class JsonEditorDialog extends StatefulWidget {
     required this.title,
     required this.initialValue,
     required this.onSave,
-    this.actionLabel = '保存',
+    this.actionLabel = '',
   });
 
   final String title;
@@ -167,7 +254,7 @@ class _JsonEditorDialogState extends State<JsonEditorDialog> {
     try {
       value = jsonDecode(controller.text);
     } catch (exception) {
-      setState(() => error = 'JSON 格式错误：$exception');
+      setState(() => error = 'JSON: $exception');
       return;
     }
     setState(() {
@@ -197,7 +284,7 @@ class _JsonEditorDialogState extends State<JsonEditorDialog> {
               icon: saving
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.save_outlined),
-              label: Text(widget.actionLabel),
+              label: Text(widget.actionLabel.isEmpty ? context.t('common.save') : widget.actionLabel),
             ),
           ],
         ),

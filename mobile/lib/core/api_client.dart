@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import 'app_localizations.dart';
 import 'connection_profile.dart';
 
 class ApiException implements Exception {
@@ -15,8 +16,9 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient(ConnectionProfile profile)
+  ApiClient(ConnectionProfile profile, {String localeCode = 'en'})
       : _profile = profile,
+        _localeCode = localeCode,
         _dio = Dio(
           BaseOptions(
             baseUrl: profile.apiBaseUrl,
@@ -33,6 +35,7 @@ class ApiClient {
   }
 
   final ConnectionProfile _profile;
+  final String _localeCode;
   final Dio _dio;
 
   ConnectionProfile get profile => _profile;
@@ -81,7 +84,7 @@ class ApiClient {
         if (body['success'] == true) return body['data'];
         if (body['success'] == false) {
           throw ApiException(
-            body['error']?.toString() ?? body['msg']?.toString() ?? '请求失败',
+            body['error']?.toString() ?? body['msg']?.toString() ?? _apiText(_localeCode, 'requestFailed'),
             statusCode: response.statusCode,
           );
         }
@@ -101,11 +104,11 @@ class ApiClient {
       message = data['error']?.toString() ?? data['msg']?.toString();
     }
     message ??= switch (error.type) {
-      DioExceptionType.connectionTimeout => '连接超时，请检查地址与网络',
-      DioExceptionType.connectionError => '无法连接面板，请检查地址、证书与自定义 Header',
-      DioExceptionType.badCertificate => '面板 TLS 证书无效',
-      DioExceptionType.receiveTimeout => '面板响应超时',
-      _ => error.message ?? '网络请求失败',
+      DioExceptionType.connectionTimeout => _apiText(_localeCode, 'connectionTimeout'),
+      DioExceptionType.connectionError => _apiText(_localeCode, 'connectionError'),
+      DioExceptionType.badCertificate => _apiText(_localeCode, 'badCertificate'),
+      DioExceptionType.receiveTimeout => _apiText(_localeCode, 'receiveTimeout'),
+      _ => error.message ?? _apiText(_localeCode, 'requestFailed'),
     };
     return ApiException(message, statusCode: error.response?.statusCode);
   }
@@ -116,8 +119,9 @@ class ApiClient {
     required String password,
     String code = '',
     int expiryDays = 30,
+    String localeCode = 'en',
   }) async {
-    final client = ApiClient(profile.copyWith(token: ''));
+    final client = ApiClient(profile.copyWith(token: ''), localeCode: localeCode);
     final result = await client.post('auth/login', data: {
       'username': username,
       'password': password,
@@ -127,3 +131,5 @@ class ApiClient {
     return Map<String, dynamic>.from(result as Map);
   }
 }
+
+String _apiText(String locale, String key) => AppLocalizations.tr(locale, 'error.$key');

@@ -27,7 +27,6 @@ This repository is an extended fork of [alireza0/s-ui](https://github.com/alirez
 - [x] Filterable analytics, structured logs, and dotted traffic charts.
 - [x] OIDC, TOTP/2FA, recovery codes, and passkey management.
 - [x] Seven-workflow GitHub Actions layout: five upstream workflows plus mobile CI and mobile release builds.
-- [ ] Signed iOS distribution (requires an Apple signing identity and provisioning profile).
 
 ## Release artifact naming
 
@@ -81,6 +80,30 @@ Tag builds include the tag in every downloadable filename, for example `s-ui-v1.
 ## API Documentation
 
 [API-Documentation Wiki](https://github.com/alireza0/s-ui/wiki/API-Documentation)
+
+## Authentication configuration
+
+Authentication features are configured from **Settings → Login & identity** and **Admins → Login security**. When the panel is behind a reverse proxy or Cloudflare Zero Trust, use the public HTTPS URL that users actually open in the browser.
+
+### OIDC / SSO
+
+Enable OIDC, then configure the issuer URL, client ID, client secret, scopes, username claim, and allowed identities. The redirect URL must exactly match the URL registered with the OIDC provider. For the default Web Path this is usually:
+
+```text
+https://panel.example.com/app/api/oidc-callback
+```
+
+If you changed the Web Path, keep that path in the callback URL, for example `https://panel.example.com/custom-path/api/oidc-callback`. The username claim defaults to `preferred_username`, then falls back to `email` and `sub`. Identities not matching an existing admin username must be listed in the allowed identities field.
+
+### TOTP / 2FA
+
+TOTP is managed from **Admins → Login security**. Enabling it shows an authenticator URI/secret and one-time recovery codes. Store the recovery codes immediately; each code can be used once when the normal 6-digit authenticator code is unavailable.
+
+### WebAuthn passkeys
+
+Enable passkeys in **Settings → Login & identity**, then add passkeys from **Admins → Login security**. RP ID and allowed origins can normally be left blank: S-UI auto-detects the current management domain from the browser origin and reverse-proxy headers such as `Forwarded`, `X-Forwarded-Host`, and `X-Forwarded-Proto`.
+
+Manual configuration is still available for unusual proxy layouts. RP ID should be only the domain, for example `panel.example.com`; allowed origins should include full scheme origins, for example `https://panel.example.com`. Passkeys require HTTPS except for localhost-style development origins. The Web UI gives a best-effort automatic name such as iCloud Keychain, Google Password Manager, Windows Hello, or Security key; names can be renamed afterwards.
 
 ## Default Installation Information
 - Panel Port: 2095
@@ -238,6 +261,9 @@ To run backend (from root folder of repository):
 - Vietnamese
 - Chinese (Simplified)
 - Chinese (Traditional)
+- Japanese
+- French
+- Latin
 - Russian
 
 ## Features

@@ -58,6 +58,7 @@ func (a *APIv3Handler) initRouter(g *gin.RouterGroup) {
 	protected.POST("/auth/totp/disable", a.totpDisable)
 	protected.POST("/auth/passkeys/register/begin", a.passkeyRegisterBegin)
 	protected.POST("/auth/passkeys/register/finish", a.passkeyRegisterFinish)
+	protected.PATCH("/auth/passkeys/:id", a.passkeyRename)
 	protected.DELETE("/auth/passkeys/:id", a.passkeyDelete)
 	protected.GET("/bootstrap", a.bootstrap)
 
@@ -68,6 +69,7 @@ func (a *APIv3Handler) initRouter(g *gin.RouterGroup) {
 	protected.GET("/onlines", a.onlines)
 	protected.GET("/analytics/stats", a.stats)
 	protected.GET("/analytics/usage", a.usage)
+	protected.GET("/analytics/connections", a.connections)
 	protected.GET("/logs", a.logs)
 	protected.GET("/changes", a.changes)
 
@@ -257,7 +259,7 @@ func (a *APIv3Handler) totpDisable(c *gin.Context) {
 }
 
 func (a *APIv3Handler) passkeyRegisterBegin(c *gin.Context) {
-	options, sessionID, err := a.AuthService.BeginPasskeyRegistration(apiUsername(c))
+	options, sessionID, err := a.AuthService.BeginPasskeyRegistration(apiUsername(c), c.Request)
 	if err != nil {
 		v3Error(c, http.StatusBadRequest, err)
 		return
@@ -276,6 +278,22 @@ func (a *APIv3Handler) passkeyRegisterFinish(c *gin.Context) {
 	}
 	logger.Audit(apiUsername(c), "registered a passkey")
 	v3OK(c, gin.H{"registered": true})
+}
+
+func (a *APIv3Handler) passkeyRename(c *gin.Context) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	if err := a.AuthService.RenamePasskey(apiUsername(c), c.Param("id"), body.Name); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	logger.Audit(apiUsername(c), "renamed a passkey")
+	v3OK(c, gin.H{"renamed": true})
 }
 
 func (a *APIv3Handler) passkeyDelete(c *gin.Context) {
@@ -440,6 +458,19 @@ func (a *APIv3Handler) usage(c *gin.Context) {
 	result, err := a.StatsService.QueryUsage(service.UsageFilter{
 		User: c.Query("user"), Search: c.Query("search"), Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
 		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 100),
+	})
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, result)
+}
+
+func (a *APIv3Handler) connections(c *gin.Context) {
+	result, err := a.StatsService.QueryConnections(service.ConnectionFilter{
+		Resource: c.Query("resource"), Tag: c.Query("tag"), User: c.Query("user"), Search: c.Query("search"),
+		Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
+		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 500),
 	})
 	if err != nil {
 		v3Error(c, http.StatusInternalServerError, err)

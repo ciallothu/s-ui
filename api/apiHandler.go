@@ -53,6 +53,8 @@ func (a *APIHandler) postHandler(c *gin.Context) {
 		a.ApiService.PasskeyLoginFinish(c)
 	case "passkey-delete":
 		a.ApiService.PasskeyDelete(c)
+	case "passkey-rename":
+		a.ApiService.PasskeyRename(c)
 	case "changePass":
 		a.ApiService.ChangePass(c)
 		a.apiv2.ReloadTokens()
@@ -125,6 +127,8 @@ func (a *APIHandler) getHandler(c *gin.Context) {
 		a.ApiService.GetFilteredUsage(c)
 	case "analytics-stats":
 		a.ApiService.GetFilteredStats(c)
+	case "analytics-connections":
+		a.ApiService.GetConnectionAnalytics(c)
 	case "changes":
 		a.ApiService.CheckChanges(c)
 	case "keypairs":

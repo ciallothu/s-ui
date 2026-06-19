@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'widgets.dart';
 
@@ -73,22 +74,22 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('修改管理员凭据'),
+        title: Text(context.t('admin.changeCred')),
         content: SizedBox(
           width: 460,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: oldPassword, obscureText: true, decoration: const InputDecoration(labelText: '当前密码')),
+              TextField(controller: oldPassword, obscureText: true, decoration: InputDecoration(labelText: context.t('admin.currentPassword'))),
               const SizedBox(height: 10),
-              TextField(controller: username, decoration: const InputDecoration(labelText: '新用户名')),
+              TextField(controller: username, decoration: InputDecoration(labelText: context.t('admin.newUsername'))),
               const SizedBox(height: 10),
-              TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: '新密码')),
+              TextField(controller: password, obscureText: true, decoration: InputDecoration(labelText: context.t('admin.newPassword'))),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(context.t('common.cancel'))),
           FilledButton(
             onPressed: () async {
               try {
@@ -99,7 +100,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
                 if (dialogContext.mounted) showMessage(dialogContext, exception.toString(), error: true);
               }
             },
-            child: const Text('保存'),
+            child: Text(context.t('common.save')),
           ),
         ],
       ),
@@ -115,13 +116,13 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('创建 API Token'),
+        title: Text(context.t('admin.createToken')),
         content: SizedBox(
           width: 420,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: description, decoration: const InputDecoration(labelText: '说明')), const SizedBox(height: 10), TextField(controller: days, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '有效天数（0 为永久）'))]),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: description, decoration: InputDecoration(labelText: context.t('admin.description'))), const SizedBox(height: 10), TextField(controller: days, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: context.t('admin.validDays')))]),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(context.t('common.cancel'))),
           FilledButton(
             onPressed: () async {
               try {
@@ -129,14 +130,14 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
                 if (!mounted) return;
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext);
-                  await showDialog<void>(context: context, builder: (resultContext) => AlertDialog(title: const Text('请立即保存 Token'), content: SelectableText(result['token']?.toString() ?? ''), actions: [FilledButton(onPressed: () => Navigator.pop(resultContext), child: const Text('完成'))]));
+                  await showDialog<void>(context: context, builder: (resultContext) => AlertDialog(title: Text(context.t('admin.saveTokenNow')), content: SelectableText(result['token']?.toString() ?? ''), actions: [FilledButton(onPressed: () => Navigator.pop(resultContext), child: Text(context.t('admin.done')))]));
                 }
                 await load();
               } catch (exception) {
                 if (dialogContext.mounted) showMessage(dialogContext, exception.toString(), error: true);
               }
             },
-            child: const Text('创建'),
+            child: Text(context.t('common.confirm')),
           ),
         ],
       ),
@@ -146,7 +147,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   }
 
   Future<void> deleteToken(Map<String, dynamic> token) async {
-    if (!await confirm(context, title: '删除 Token', message: '使用此 Token 的客户端会立即失去访问权限。', action: '删除')) return;
+    if (!await confirm(context, title: context.tr('admin.deleteToken'), message: context.tr('admin.deleteTokenMsg'), action: context.tr('common.delete'))) return;
     if (!mounted) return;
     try {
       await context.read<AppState>().api!.delete('tokens/${token['id']}');
@@ -164,20 +165,20 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
 	  final confirmed = await showDialog<bool>(
 		context: context,
 		builder: (dialogContext) => AlertDialog(
-		  title: const Text('启用两步验证'),
+		  title: Text(context.t('admin.enableTotp')),
 		  content: SizedBox(
 			width: 520,
 			child: Column(mainAxisSize: MainAxisSize.min, children: [
-			  const Text('在验证器中导入下面的 URI 或密钥，然后输入当前验证码。'),
+			  Text(context.t('admin.totpSetup')),
 			  const SizedBox(height: 10),
 			  SelectableText(setup['uri']?.toString() ?? setup['secret']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace')),
 			  const SizedBox(height: 12),
-			  TextField(controller: code, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: '6 位验证码')),
+			  TextField(controller: code, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: context.t('admin.code6'))),
 			]),
 		  ),
 		  actions: [
-			TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
-			FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('启用')),
+			TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(context.t('common.cancel'))),
+			FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(context.t('common.confirm'))),
 		  ],
 		),
 	  );
@@ -189,9 +190,9 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
 	  code.dispose();
 	  if (!mounted) return;
 	  await showDialog<void>(context: context, builder: (resultContext) => AlertDialog(
-		title: const Text('请保存恢复码'),
+		title: Text(context.t('admin.recoveryCodes')),
 		content: SelectableText((result['recoveryCodes'] as List? ?? const []).join('\n'), style: const TextStyle(fontFamily: 'monospace')),
-		actions: [FilledButton(onPressed: () => Navigator.pop(resultContext), child: const Text('我已保存'))],
+		actions: [FilledButton(onPressed: () => Navigator.pop(resultContext), child: Text(context.t('admin.saved')))],
 	  ));
 	  await load();
 	} catch (exception) {
@@ -203,13 +204,13 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
 	final password = TextEditingController();
 	final code = TextEditingController();
 	final confirmed = await showDialog<bool>(context: context, builder: (dialogContext) => AlertDialog(
-	  title: const Text('关闭两步验证'),
+	  title: Text(context.t('admin.disableTotp')),
 	  content: SizedBox(width: 440, child: Column(mainAxisSize: MainAxisSize.min, children: [
-		TextField(controller: password, obscureText: true, decoration: const InputDecoration(labelText: '当前密码')),
+		TextField(controller: password, obscureText: true, decoration: InputDecoration(labelText: context.t('admin.currentPassword'))),
 		const SizedBox(height: 10),
-		TextField(controller: code, decoration: const InputDecoration(labelText: '验证码或恢复码')),
+		TextField(controller: code, decoration: InputDecoration(labelText: context.t('admin.codeOrRecovery'))),
 	  ])),
-	  actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')), FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('关闭'))],
+	  actions: [TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(context.t('common.cancel'))), FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(context.t('common.close')))],
 	));
 	if (confirmed == true && mounted) {
 	  try {
@@ -224,7 +225,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   }
 
   Future<void> deletePasskey(Map<String, dynamic> passkey) async {
-	if (!await confirm(context, title: '删除通行密钥', message: '删除后该设备将不能再用于免密码登录。', action: '删除')) return;
+	if (!await confirm(context, title: context.tr('admin.deletePasskey'), message: context.tr('admin.deletePasskeyMsg'), action: context.tr('common.delete'))) return;
 	if (!mounted) return;
 	try {
 	  await context.read<AppState>().api!.delete('auth/passkeys/${passkey['id']}');
@@ -239,14 +240,14 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
     return Column(
       children: [
         PageHeader(
-          title: '管理员',
-          subtitle: '账号、API Token 与变更审计',
+          title: context.t('admin.title'),
+          subtitle: context.t('admin.subtitle'),
           actions: [if (tabs.index == 1) IconButton.filled(onPressed: addToken, icon: const Icon(Icons.add))],
         ),
-        TabBar(controller: tabs, isScrollable: true, tabs: const [Tab(text: '管理员'), Tab(text: 'API Token'), Tab(text: '变更记录'), Tab(text: '登录安全')]),
+        TabBar(controller: tabs, isScrollable: true, tabs: [Tab(text: context.t('admin.admins')), Tab(text: context.t('admin.tokens')), Tab(text: context.t('admin.changes')), Tab(text: context.t('admin.security'))]),
         if (tabs.index == 2)
           FilterCard(
-            child: Row(children: [Expanded(child: TextField(controller: actor, onSubmitted: (_) => load(), decoration: const InputDecoration(labelText: '执行者'))), const SizedBox(width: 8), Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: const InputDecoration(labelText: '搜索', prefixIcon: Icon(Icons.search)))), const SizedBox(width: 8), IconButton.filledTonal(onPressed: load, icon: const Icon(Icons.refresh))]),
+            child: Row(children: [Expanded(child: TextField(controller: actor, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('admin.actor')))), const SizedBox(width: 8), Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('common.search'), prefixIcon: const Icon(Icons.search)))), const SizedBox(width: 8), IconButton.filledTonal(onPressed: load, icon: const Icon(Icons.refresh))]),
           ),
         if (loading) const LinearProgressIndicator(minHeight: 2),
         Expanded(
@@ -264,7 +265,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           children: users.isEmpty
-              ? [const EmptyState(label: '没有管理员')]
+              ? [EmptyState(label: context.t('admin.noAdmins'))]
               : [for (final raw in users) _userCard(Map<String, dynamic>.from(raw as Map))],
         ),
       );
@@ -273,7 +274,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
         child: ListTile(
           leading: const CircleAvatar(child: Icon(Icons.admin_panel_settings_outlined)),
           title: Text(item['username']?.toString() ?? '—', style: const TextStyle(fontWeight: FontWeight.w700)),
-          subtitle: Text('上次登录 ${item['lastLogin']?.toString().isNotEmpty == true ? item['lastLogin'] : '—'}'),
+          subtitle: Text(context.t('admin.lastLogin', args: {'time': item['lastLogin']?.toString().isNotEmpty == true ? item['lastLogin'] : '—'})),
           trailing: IconButton(onPressed: () => changeCredentials(item), icon: const Icon(Icons.edit_outlined)),
         ),
       );
@@ -284,7 +285,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           children: tokens.isEmpty
-              ? [const EmptyState(label: '没有额外 API Token')]
+              ? [EmptyState(label: context.t('admin.noTokens'))]
               : [for (final raw in tokens) _tokenCard(Map<String, dynamic>.from(raw as Map))],
         ),
       );
@@ -292,7 +293,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
   Widget _tokenCard(Map<String, dynamic> item) => Card(
         child: ListTile(
           leading: const CircleAvatar(child: Icon(Icons.key_outlined)),
-          title: Text(item['desc']?.toString().isNotEmpty == true ? item['desc'].toString() : '未命名 Token'),
+          title: Text(item['desc']?.toString().isNotEmpty == true ? item['desc'].toString() : context.t('admin.unnamedToken')),
           subtitle: Text(_expiry(item['expiry'])),
           trailing: IconButton(onPressed: () => deleteToken(item), icon: const Icon(Icons.delete_outline)),
         ),
@@ -304,7 +305,7 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           children: changes.isEmpty
-              ? [const EmptyState(label: '没有匹配的变更记录')]
+              ? [EmptyState(label: context.t('admin.noChanges'))]
               : [for (final raw in changes) _changeCard(Map<String, dynamic>.from(raw as Map))],
         ),
       );
@@ -330,22 +331,22 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
 		children: [
 		  Card(child: SwitchListTile(
 			secondary: const Icon(Icons.phonelink_lock_outlined),
-			title: const Text('TOTP 两步验证'),
-			subtitle: Text(totpEnabled ? '已启用；登录需要验证码或恢复码' : '未启用'),
+			title: Text(context.t('admin.totp')),
+			subtitle: Text(totpEnabled ? context.t('admin.totpEnabled') : context.t('admin.totpDisabled')),
 			value: totpEnabled,
 			onChanged: (_) => totpEnabled ? disableTotp() : enableTotp(),
 		  )),
 		  Card(child: Column(children: [
-			ListTile(leading: const Icon(Icons.key_outlined), title: const Text('通行密钥'), subtitle: Text(methods['passkey'] == true ? '服务端已启用；请在 Web 页面注册新通行密钥' : '服务端尚未启用')),
+			ListTile(leading: const Icon(Icons.key_outlined), title: Text(context.t('admin.passkeys')), subtitle: Text(methods['passkey'] == true ? context.t('admin.passkeysWebOnly') : context.t('admin.passkeysDisabled'))),
 			for (final raw in passkeys)
 			  ListTile(
 				leading: const Icon(Icons.key_outlined),
-				title: Text((raw as Map)['name']?.toString() ?? 'Passkey'),
-				subtitle: Text('创建 ${formatTimestamp(raw['createdAt'])}'),
+				title: Text((raw as Map)['name']?.toString() ?? context.t('auth.passkey')),
+				subtitle: Text(formatTimestamp(raw['createdAt'])),
 				trailing: IconButton(onPressed: () => deletePasskey(Map<String, dynamic>.from(raw)), icon: const Icon(Icons.delete_outline)),
 			  ),
 		  ])),
-		  Card(child: ListTile(leading: const Icon(Icons.badge_outlined), title: const Text('OIDC 单点登录'), subtitle: Text(methods['oidc'] == true ? '已启用，可从 Web 登录页使用' : '未启用'))),
+		  Card(child: ListTile(leading: const Icon(Icons.badge_outlined), title: Text(context.t('admin.oidc')), subtitle: Text(methods['oidc'] == true ? context.t('admin.oidcEnabled') : context.t('admin.oidcDisabled')))),
 		],
 	  ),
 	);
@@ -353,6 +354,6 @@ class _AdminPageState extends State<AdminPage> with SingleTickerProviderStateMix
 
   String _expiry(dynamic value) {
     final timestamp = int.tryParse(value?.toString() ?? '') ?? 0;
-    return timestamp == 0 ? '永久有效' : '到期 ${formatTimestamp(timestamp)}';
+    return timestamp == 0 ? context.t('time.forever') : context.t('time.expiry', args: {'time': formatTimestamp(timestamp)});
   }
 }

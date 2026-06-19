@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'widgets.dart';
 
@@ -26,11 +27,11 @@ class DashboardPage extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 24),
         children: [
           PageHeader(
-            title: '运行概览',
+            title: context.t('dashboard.title'),
             subtitle: '${system['hostName'] ?? 'S-UI'} · v${system['appVersion'] ?? '—'}',
             actions: [
               IconButton.filledTonal(
-                tooltip: '重启 sing-box',
+                tooltip: context.t('dashboard.restartCore'),
                 onPressed: () => _restartCore(context),
                 icon: const Icon(Icons.restart_alt),
               ),
@@ -42,12 +43,12 @@ class DashboardPage extends StatelessWidget {
               spacing: 10,
               runSpacing: 10,
               children: [
-                _MetricCard(label: 'sing-box', value: core['running'] == true ? '运行中' : '已停止', icon: Icons.power_settings_new, good: core['running'] == true),
+                _MetricCard(label: 'sing-box', value: core['running'] == true ? context.t('dashboard.running') : context.t('dashboard.stopped'), icon: Icons.power_settings_new, good: core['running'] == true),
                 _MetricCard(label: 'CPU', value: '${(_number(status['cpu'])).toStringAsFixed(1)}%', icon: Icons.memory),
-                _MetricCard(label: '内存', value: '${formatBytes(memory['current'])} / ${formatBytes(memory['total'])}', icon: Icons.data_usage),
-                _MetricCard(label: '磁盘', value: '${formatBytes(disk['current'])} / ${formatBytes(disk['total'])}', icon: Icons.storage_outlined),
-                _MetricCard(label: '累计上传', value: formatBytes(database['clientUp']), icon: Icons.upload, color: Colors.orange),
-                _MetricCard(label: '累计下载', value: formatBytes(database['clientDown']), icon: Icons.download, color: Colors.green),
+                _MetricCard(label: context.t('dashboard.memory'), value: '${formatBytes(memory['current'])} / ${formatBytes(memory['total'])}', icon: Icons.data_usage),
+                _MetricCard(label: context.t('dashboard.disk'), value: '${formatBytes(disk['current'])} / ${formatBytes(disk['total'])}', icon: Icons.storage_outlined),
+                _MetricCard(label: context.t('dashboard.totalUpload'), value: formatBytes(database['clientUp']), icon: Icons.upload, color: Colors.orange),
+                _MetricCard(label: context.t('dashboard.totalDownload'), value: formatBytes(database['clientDown']), icon: Icons.download, color: Colors.green),
               ],
             ),
           ),
@@ -60,17 +61,17 @@ class DashboardPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('资源', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                    Text(context.t('dashboard.resources'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        _CountChip(label: '用户', value: database['clients']),
-                        _CountChip(label: '入站', value: database['inbounds']),
-                        _CountChip(label: '出站', value: database['outbounds']),
-                        _CountChip(label: '节点', value: database['endpoints']),
-                        _CountChip(label: '服务', value: database['services']),
+                        _CountChip(label: context.t('dashboard.users'), value: database['clients']),
+                        _CountChip(label: context.t('dashboard.inbounds'), value: database['inbounds']),
+                        _CountChip(label: context.t('dashboard.outbounds'), value: database['outbounds']),
+                        _CountChip(label: context.t('dashboard.nodes'), value: database['endpoints']),
+                        _CountChip(label: context.t('dashboard.services'), value: database['services']),
                       ],
                     ),
                   ],
@@ -87,11 +88,11 @@ class DashboardPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('在线状态', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                    Text(context.t('dashboard.onlineStatus'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 12),
-                    _OnlineSection(label: '用户', values: _strings(online['user']), color: Colors.blue),
-                    _OnlineSection(label: '入站', values: _strings(online['inbound']), color: Colors.green),
-                    _OnlineSection(label: '出站', values: _strings(online['outbound']), color: Colors.teal),
+                    _OnlineSection(label: context.t('dashboard.users'), values: _strings(online['user']), color: Colors.blue),
+                    _OnlineSection(label: context.t('dashboard.inbounds'), values: _strings(online['inbound']), color: Colors.green),
+                    _OnlineSection(label: context.t('dashboard.outbounds'), values: _strings(online['outbound']), color: Colors.teal),
                   ],
                 ),
               ),
@@ -103,11 +104,11 @@ class DashboardPage extends StatelessWidget {
   }
 
   Future<void> _restartCore(BuildContext context) async {
-    if (!await confirm(context, title: '重启 sing-box', message: '现有连接可能短暂中断。', action: '重启')) return;
+    if (!await confirm(context, title: context.tr('dashboard.restartCore'), message: context.tr('dashboard.restartConfirm'), action: context.tr('dashboard.restartCore'))) return;
     if (!context.mounted) return;
     try {
       await context.read<AppState>().api!.post('actions/restart-core');
-      if (context.mounted) showMessage(context, '已提交重启');
+      if (context.mounted) showMessage(context, context.tr('dashboard.restartSubmitted'));
     } catch (exception) {
       if (context.mounted) showMessage(context, exception.toString(), error: true);
     }
@@ -171,7 +172,7 @@ class _OnlineSection extends StatelessWidget {
             SizedBox(width: 48, child: Padding(padding: const EdgeInsets.only(top: 6), child: Text(label))),
             Expanded(
               child: values.isEmpty
-                  ? const Padding(padding: EdgeInsets.only(top: 6), child: Text('暂无在线项'))
+                  ? Padding(padding: const EdgeInsets.only(top: 6), child: Text(context.t('dashboard.noOnline')))
                   : Wrap(spacing: 6, runSpacing: 6, children: [for (final value in values) Chip(label: Text(value), backgroundColor: color.withValues(alpha: .12))]),
             ),
           ],

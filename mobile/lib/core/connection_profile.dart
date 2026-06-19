@@ -17,7 +17,7 @@ class ConnectionProfile {
   static const cloudflareClientSecret = 'CF-Access-Client-Secret';
 
   factory ConnectionProfile.empty() => const ConnectionProfile(
-        name: '我的 S-UI',
+        name: 'S-UI',
         baseUrl: '',
         headers: {
           cloudflareClientId: '',
@@ -72,7 +72,7 @@ class ConnectionProfile {
       }
     }
     return ConnectionProfile(
-      name: json['name']?.toString() ?? '我的 S-UI',
+      name: json['name']?.toString() ?? 'S-UI',
       baseUrl: json['baseUrl']?.toString() ?? '',
       token: json['token']?.toString() ?? '',
       headers: headers,

@@ -22,3 +22,12 @@ func (a *ApiService) GetFilteredStats(c *gin.Context) {
 	})
 	jsonObj(c, result, err)
 }
+
+func (a *ApiService) GetConnectionAnalytics(c *gin.Context) {
+	result, err := a.StatsService.QueryConnections(service.ConnectionFilter{
+		Resource: c.Query("resource"), Tag: c.Query("tag"), User: c.Query("user"), Search: c.Query("search"),
+		Start: queryInt64(c, "start"), End: queryInt64(c, "end"),
+		Offset: queryInt(c, "offset", 0), Limit: queryInt(c, "limit", 500),
+	})
+	jsonObj(c, result, err)
+}

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
+import 'core/app_localizations.dart';
 import 'state/app_state.dart';
 import 'ui/connect_page.dart';
 import 'ui/shell.dart';
@@ -21,13 +23,22 @@ class SuiMobile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider.value(
       value: state,
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'S-UI',
-        themeMode: ThemeMode.system,
-        theme: _theme(Brightness.light),
-        darkTheme: _theme(Brightness.dark),
-        home: const AppGate(),
+      child: Consumer<AppState>(
+        builder: (context, appState, _) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'S-UI',
+          locale: AppLocalizations.localeOf(appState.localeCode),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+          ],
+          themeMode: ThemeMode.system,
+          theme: _theme(Brightness.light),
+          darkTheme: _theme(Brightness.dark),
+          home: const AppGate(),
+        ),
       ),
     );
   }

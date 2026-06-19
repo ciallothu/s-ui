@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'visual_editor.dart';
 import 'widgets.dart';
@@ -78,7 +79,7 @@ class _ResourcePageState extends State<ResourcePage> {
   }
 
   Future<void> remove(dynamic item) async {
-    if (!await confirm(context, title: '删除${widget.title}', message: '此操作会立即更新 sing-box 配置。', action: '删除')) return;
+    if (!await confirm(context, title: context.tr('resource.deleteTitle', args: {'title': widget.title}), message: context.tr('resource.deleteMessage'), action: context.tr('common.delete'))) return;
     if (!mounted) return;
     try {
       final value = item is Map
@@ -86,7 +87,7 @@ class _ResourcePageState extends State<ResourcePage> {
           : item;
       await context.read<AppState>().saveResource(widget.resource, 'del', value);
       await load();
-      if (mounted) showMessage(context, '已删除');
+      if (mounted) showMessage(context, context.tr('resource.deleted'));
     } catch (exception) {
       if (mounted) showMessage(context, exception.toString(), error: true);
     }
@@ -99,29 +100,29 @@ class _ResourcePageState extends State<ResourcePage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('批量操作'),
+          title: Text(context.t('resource.bulk')),
           content: SizedBox(
             width: 620,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                DropdownButtonFormField<String>(
-                  initialValue: action,
-                  items: const [
-                    DropdownMenuItem(value: 'addbulk', child: Text('批量添加')),
-                    DropdownMenuItem(value: 'editbulk', child: Text('批量编辑')),
-                    DropdownMenuItem(value: 'delbulk', child: Text('批量删除')),
+                AnchoredSelect<String>(
+                  value: action,
+                  options: [
+                    SelectOption('addbulk', context.t('resource.bulkAdd')),
+                    SelectOption('editbulk', context.t('resource.bulkEdit')),
+                    SelectOption('delbulk', context.t('resource.bulkDelete')),
                   ],
-                  onChanged: (value) => setDialogState(() => action = value ?? action),
-                  decoration: const InputDecoration(labelText: '操作'),
+                  onChanged: (value) => setDialogState(() => action = value),
+                  label: context.t('resource.action'),
                 ),
                 const SizedBox(height: 12),
-                TextField(controller: controller, minLines: 8, maxLines: 16, style: const TextStyle(fontFamily: 'monospace'), decoration: const InputDecoration(labelText: 'JSON 数组')),
+                TextField(controller: controller, minLines: 8, maxLines: 16, style: const TextStyle(fontFamily: 'monospace'), decoration: InputDecoration(labelText: context.t('resource.jsonArray'))),
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('取消')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(context.t('common.cancel'))),
             FilledButton(
               onPressed: () async {
                 try {
@@ -133,7 +134,7 @@ class _ResourcePageState extends State<ResourcePage> {
                   if (dialogContext.mounted) showMessage(dialogContext, exception.toString(), error: true);
                 }
               },
-              child: const Text('执行'),
+              child: Text(context.t('resource.execute')),
             ),
           ],
         ),
@@ -148,7 +149,7 @@ class _ResourcePageState extends State<ResourcePage> {
       if (!mounted) return;
       final ok = result['OK'] == true;
       final delay = result['Delay'];
-      showMessage(context, ok ? '连接正常${delay == null ? '' : ' · ${delay}ms'}' : result['Error']?.toString() ?? '测试失败', error: !ok);
+      showMessage(context, ok ? context.tr('resource.checkOk', args: {'delay': delay == null ? '' : ' · ${delay}ms'}) : result['Error']?.toString() ?? context.tr('resource.checkFailed'), error: !ok);
     } catch (exception) {
       if (mounted) showMessage(context, exception.toString(), error: true);
     }
@@ -158,7 +159,7 @@ class _ResourcePageState extends State<ResourcePage> {
     try {
       final result = await context.read<AppState>().getResource('clients', id: summary['id']?.toString());
       final list = result is List ? result : const [];
-      if (list.isEmpty) throw const FormatException('找不到用户详情');
+      if (list.isEmpty) throw FormatException(context.tr('resource.userNotFound'));
       final client = Map<String, dynamic>.from(list.first as Map);
       if (!mounted) return;
       final state = context.read<AppState>();
@@ -168,20 +169,20 @@ class _ResourcePageState extends State<ResourcePage> {
       if (subBase.isNotEmpty) {
         final subscription = '$subBase${client['name']}';
         values.addAll([
-          _QrValue('订阅', subscription),
-          _QrValue('JSON 订阅', '$subscription?format=json'),
-          _QrValue('Clash 订阅', '$subscription?format=clash'),
-          _QrValue('Sing-box 导入', 'sing-box://import-remote-profile?url=${Uri.encodeComponent('$subscription?format=json')}#${client['name']}'),
+          _QrValue(context.tr('resource.subscription'), subscription),
+          _QrValue(context.tr('resource.jsonSubscription'), '$subscription?format=json'),
+          _QrValue(context.tr('resource.clashSubscription'), '$subscription?format=clash'),
+          _QrValue(context.tr('resource.singboxImport'), 'sing-box://import-remote-profile?url=${Uri.encodeComponent('$subscription?format=json')}#${client['name']}'),
         ]);
       }
       final links = client['links'];
       if (links is List) {
         for (final raw in links) {
-          if (raw is Map && raw['uri'] != null) values.add(_QrValue(raw['remark']?.toString() ?? raw['type']?.toString() ?? '分享链接', raw['uri'].toString()));
+          if (raw is Map && raw['uri'] != null) values.add(_QrValue(raw['remark']?.toString() ?? raw['type']?.toString() ?? context.tr('resource.shareLink'), raw['uri'].toString()));
         }
       }
       if (!mounted) return;
-      await _showQrValues('${client['name']} · 二维码', values);
+      await _showQrValues('${client['name']} · ${context.tr('resource.qrcode')}', values);
     } catch (exception) {
       if (mounted) showMessage(context, exception.toString(), error: true);
     }
@@ -191,7 +192,7 @@ class _ResourcePageState extends State<ResourcePage> {
     final peers = item['peers'];
     final ext = item['ext'];
     if (peers is! List || ext is! Map) {
-      showMessage(context, '节点没有可用的 WireGuard Peer 配置', error: true);
+      showMessage(context, context.tr('resource.noWireguardPeers'), error: true);
       return;
     }
     final host = Uri.tryParse(context.read<AppState>().profile?.normalizedBaseUrl ?? '')?.host ?? '';
@@ -227,7 +228,7 @@ class _ResourcePageState extends State<ResourcePage> {
 
   Future<void> _showQrValues(String title, List<_QrValue> values) async {
     if (values.isEmpty) {
-      showMessage(context, '没有可展示的链接', error: true);
+      showMessage(context, context.tr('resource.noLinks'), error: true);
       return;
     }
     await showDialog<void>(
@@ -250,7 +251,7 @@ class _ResourcePageState extends State<ResourcePage> {
                         ColoredBox(color: Colors.white, child: Padding(padding: const EdgeInsets.all(10), child: QrImageView(data: value.value, size: 260))),
                         const SizedBox(height: 10),
                         SelectableText(value.value, maxLines: 4),
-                        TextButton.icon(onPressed: () { Clipboard.setData(ClipboardData(text: value.value)); showMessage(context, '已复制'); }, icon: const Icon(Icons.copy), label: const Text('复制')),
+                        TextButton.icon(onPressed: () { Clipboard.setData(ClipboardData(text: value.value)); showMessage(context, context.tr('resource.copied')); }, icon: const Icon(Icons.copy), label: Text(context.t('resource.copy'))),
                       ],
                     ),
                   ),
@@ -268,11 +269,11 @@ class _ResourcePageState extends State<ResourcePage> {
       children: [
         PageHeader(
           title: widget.title,
-          subtitle: '完整字段编辑与搜索，兼容 sing-box 新协议字段',
+          subtitle: context.t('resource.subtitle'),
           actions: [
-            IconButton.filledTonal(tooltip: '批量操作', onPressed: bulk, icon: const Icon(Icons.playlist_add)),
+            IconButton.filledTonal(tooltip: context.t('resource.bulk'), onPressed: bulk, icon: const Icon(Icons.playlist_add)),
             const SizedBox(width: 8),
-            IconButton.filled(tooltip: '新建', onPressed: () => edit(template(), 'new'), icon: const Icon(Icons.add)),
+            IconButton.filled(tooltip: context.t('resource.new'), onPressed: () => edit(template(), 'new'), icon: const Icon(Icons.add)),
           ],
         ),
         Padding(
@@ -280,7 +281,7 @@ class _ResourcePageState extends State<ResourcePage> {
           child: TextField(
             controller: search,
             onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(labelText: '搜索${widget.title}', prefixIcon: const Icon(Icons.search), suffixIcon: search.text.isEmpty ? null : IconButton(onPressed: () => setState(search.clear), icon: const Icon(Icons.clear))),
+            decoration: InputDecoration(labelText: context.t('resource.search', args: {'title': widget.title}), prefixIcon: const Icon(Icons.search), suffixIcon: search.text.isEmpty ? null : IconButton(onPressed: () => setState(search.clear), icon: const Icon(Icons.clear))),
           ),
         ),
         Expanded(
@@ -289,7 +290,7 @@ class _ResourcePageState extends State<ResourcePage> {
               : error != null
                   ? EmptyState(label: error!, icon: Icons.error_outline)
                   : filtered.isEmpty
-                      ? const EmptyState(label: '没有匹配的数据')
+                      ? EmptyState(label: context.t('resource.empty'))
                       : RefreshIndicator(
                           onRefresh: load,
                           child: ListView.builder(
@@ -330,7 +331,7 @@ class _ResourcePageState extends State<ResourcePage> {
                 return;
               case 'copy':
                 Clipboard.setData(ClipboardData(text: prettyJson(item)));
-                showMessage(context, 'JSON 已复制');
+                showMessage(context, context.tr('resource.jsonCopied'));
                 return;
               case 'delete':
                 remove(item);
@@ -347,13 +348,13 @@ class _ResourcePageState extends State<ResourcePage> {
             }
           },
           itemBuilder: (_) => [
-            const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('编辑'))),
-            const PopupMenuItem(value: 'clone', child: ListTile(leading: Icon(Icons.copy_all_outlined), title: Text('克隆'))),
-            if (widget.resource == 'outbounds') const PopupMenuItem(value: 'test', child: ListTile(leading: Icon(Icons.speed_outlined), title: Text('连接测试'))),
-            if (widget.resource == 'clients') const PopupMenuItem(value: 'qr-client', child: ListTile(leading: Icon(Icons.qr_code), title: Text('订阅与二维码'))),
-            if (widget.resource == 'endpoints' && item['type'] == 'wireguard') const PopupMenuItem(value: 'qr-wireguard', child: ListTile(leading: Icon(Icons.qr_code), title: Text('WireGuard 二维码'))),
-            const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.content_copy), title: Text('复制 JSON'))),
-            const PopupMenuItem(value: 'delete', child: ListTile(leading: Icon(Icons.delete_outline), title: Text('删除'))),
+            PopupMenuItem(value: 'edit', child: ListTile(leading: const Icon(Icons.edit_outlined), title: Text(context.t('resource.edit')))),
+            PopupMenuItem(value: 'clone', child: ListTile(leading: const Icon(Icons.copy_all_outlined), title: Text(context.t('resource.clone')))),
+            if (widget.resource == 'outbounds') PopupMenuItem(value: 'test', child: ListTile(leading: const Icon(Icons.speed_outlined), title: Text(context.t('resource.connectionTest')))),
+            if (widget.resource == 'clients') PopupMenuItem(value: 'qr-client', child: ListTile(leading: const Icon(Icons.qr_code), title: Text(context.t('resource.subscriptionQr')))),
+            if (widget.resource == 'endpoints' && item['type'] == 'wireguard') PopupMenuItem(value: 'qr-wireguard', child: ListTile(leading: const Icon(Icons.qr_code), title: Text(context.t('resource.wireguardQr')))),
+            PopupMenuItem(value: 'copy', child: ListTile(leading: const Icon(Icons.content_copy), title: Text(context.t('resource.copyJson')))),
+            PopupMenuItem(value: 'delete', child: ListTile(leading: const Icon(Icons.delete_outline), title: Text(context.t('common.delete')))),
           ],
         ),
         onTap: () => edit(item, 'edit'),
@@ -361,7 +362,7 @@ class _ResourcePageState extends State<ResourcePage> {
     );
   }
 
-  String _actionName(String action) => const {'new': '新建', 'edit': '编辑'}[action] ?? action;
+  String _actionName(String action) => {'new': context.t('resource.new'), 'edit': context.t('resource.edit')}[action] ?? action;
 }
 
 class _QrValue {

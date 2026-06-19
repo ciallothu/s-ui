@@ -67,7 +67,7 @@ func (a *ApiService) TOTPDisable(c *gin.Context) {
 }
 
 func (a *ApiService) PasskeyRegistrationBegin(c *gin.Context) {
-	options, sessionID, err := a.AuthService.BeginPasskeyRegistration(GetLoginUser(c))
+	options, sessionID, err := a.AuthService.BeginPasskeyRegistration(GetLoginUser(c), c.Request)
 	jsonObj(c, gin.H{"options": options, "sessionId": sessionID}, err)
 }
 
@@ -88,7 +88,7 @@ func (a *ApiService) PasskeyLoginBegin(c *gin.Context) {
 	if username == "" {
 		username = strings.TrimSpace(c.Request.FormValue("username"))
 	}
-	options, sessionID, err := a.AuthService.BeginPasskeyLogin(username)
+	options, sessionID, err := a.AuthService.BeginPasskeyLogin(username, c.Request)
 	jsonObj(c, gin.H{"options": options, "sessionId": sessionID}, err)
 }
 
@@ -120,6 +120,14 @@ func (a *ApiService) PasskeyDelete(c *gin.Context) {
 	err := a.AuthService.DeletePasskey(GetLoginUser(c), c.Request.FormValue("id"))
 	if err == nil {
 		logger.Audit(GetLoginUser(c), "deleted a passkey")
+	}
+	jsonMsg(c, "save", err)
+}
+
+func (a *ApiService) PasskeyRename(c *gin.Context) {
+	err := a.AuthService.RenamePasskey(GetLoginUser(c), c.Request.FormValue("id"), c.Request.FormValue("name"))
+	if err == nil {
+		logger.Audit(GetLoginUser(c), "renamed a passkey")
 	}
 	jsonMsg(c, "save", err)
 }

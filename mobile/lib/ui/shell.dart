@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'admin_page.dart';
 import 'analytics_page.dart';
@@ -12,10 +13,10 @@ import 'tools_page.dart';
 import 'widgets.dart';
 
 class _Destination {
-  const _Destination(this.label, this.icon, this.builder);
-  final String label;
+  const _Destination(this.labelKey, this.icon, this.builder);
+  final String labelKey;
   final IconData icon;
-  final Widget Function() builder;
+  final Widget Function(BuildContext context) builder;
 }
 
 class AppShell extends StatefulWidget {
@@ -29,18 +30,18 @@ class _AppShellState extends State<AppShell> {
   int selected = 0;
 
   late final destinations = <_Destination>[
-    _Destination('主页', Icons.home_outlined, () => const DashboardPage()),
-    _Destination('用户管理', Icons.people_outline, () => const ResourcePage(resource: 'clients', title: '用户管理', icon: Icons.people_outline)),
-    _Destination('入站管理', Icons.cloud_download_outlined, () => const ResourcePage(resource: 'inbounds', title: '入站管理', icon: Icons.cloud_download_outlined)),
-    _Destination('出站管理', Icons.cloud_upload_outlined, () => const ResourcePage(resource: 'outbounds', title: '出站管理', icon: Icons.cloud_upload_outlined)),
-    _Destination('节点管理', Icons.cloud_queue_outlined, () => const ResourcePage(resource: 'endpoints', title: '节点管理', icon: Icons.cloud_queue_outlined)),
-    _Destination('服务管理', Icons.dns_outlined, () => const ResourcePage(resource: 'services', title: '服务管理', icon: Icons.dns_outlined)),
-    _Destination('TLS 设置', Icons.workspace_premium_outlined, () => const ResourcePage(resource: 'tls', title: 'TLS 设置', icon: Icons.workspace_premium_outlined)),
-    _Destination('核心配置', Icons.tune, () => const ConfigPage()),
-    _Destination('用量与统计', Icons.query_stats, () => const AnalyticsPage()),
-    _Destination('日志', Icons.receipt_long_outlined, () => const LogsPage()),
-    _Destination('管理员', Icons.admin_panel_settings_outlined, () => const AdminPage()),
-    _Destination('设置与工具', Icons.settings_outlined, () => const ToolsPage()),
+    _Destination('nav.home', Icons.home_outlined, (_) => const DashboardPage()),
+    _Destination('nav.clients', Icons.people_outline, (context) => ResourcePage(resource: 'clients', title: context.t('nav.clients'), icon: Icons.people_outline)),
+    _Destination('nav.inbounds', Icons.cloud_download_outlined, (context) => ResourcePage(resource: 'inbounds', title: context.t('nav.inbounds'), icon: Icons.cloud_download_outlined)),
+    _Destination('nav.outbounds', Icons.cloud_upload_outlined, (context) => ResourcePage(resource: 'outbounds', title: context.t('nav.outbounds'), icon: Icons.cloud_upload_outlined)),
+    _Destination('nav.endpoints', Icons.cloud_queue_outlined, (context) => ResourcePage(resource: 'endpoints', title: context.t('nav.endpoints'), icon: Icons.cloud_queue_outlined)),
+    _Destination('nav.services', Icons.dns_outlined, (context) => ResourcePage(resource: 'services', title: context.t('nav.services'), icon: Icons.dns_outlined)),
+    _Destination('nav.tls', Icons.workspace_premium_outlined, (context) => ResourcePage(resource: 'tls', title: context.t('nav.tls'), icon: Icons.workspace_premium_outlined)),
+    _Destination('nav.config', Icons.tune, (_) => const ConfigPage()),
+    _Destination('nav.analytics', Icons.query_stats, (_) => const AnalyticsPage()),
+    _Destination('nav.logs', Icons.receipt_long_outlined, (_) => const LogsPage()),
+    _Destination('nav.admin', Icons.admin_panel_settings_outlined, (_) => const AdminPage()),
+    _Destination('nav.tools', Icons.settings_outlined, (_) => const ToolsPage()),
   ];
 
   @override
@@ -49,22 +50,22 @@ class _AppShellState extends State<AppShell> {
     final state = context.watch<AppState>();
     final body = KeyedSubtree(
       key: ValueKey(selected),
-      child: destinations[selected].builder(),
+      child: destinations[selected].builder(context),
     );
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(destinations[selected].label),
+        title: Text(context.t(destinations[selected].labelKey)),
         centerTitle: !wide,
         actions: [
           IconButton(
-            tooltip: '刷新',
+            tooltip: context.t('common.refresh'),
             onPressed: state.busy
                 ? null
                 : () async {
                     try {
                       await state.refreshBootstrap();
-                      if (context.mounted) showMessage(context, '已刷新');
+                      if (context.mounted) showMessage(context, context.tr('common.refreshed'));
                     } catch (exception) {
                       if (context.mounted) showMessage(context, exception.toString(), error: true);
                     }
@@ -87,7 +88,7 @@ class _AppShellState extends State<AppShell> {
               ),
               destinations: [
                 for (final destination in destinations)
-                  NavigationRailDestination(icon: Icon(destination.icon), label: Text(destination.label)),
+                  NavigationRailDestination(icon: Icon(destination.icon), label: Text(context.t(destination.labelKey))),
               ],
             ),
           Expanded(child: body),
@@ -125,14 +126,14 @@ class _AppShellState extends State<AppShell> {
         ),
         const Divider(),
         for (final destination in destinations)
-          NavigationDrawerDestination(icon: Icon(destination.icon), label: Text(destination.label)),
+          NavigationDrawerDestination(icon: Icon(destination.icon), label: Text(context.t(destination.labelKey))),
         const Divider(),
         ListTile(
           leading: const Icon(Icons.logout),
-          title: const Text('退出当前连接'),
+          title: Text(context.t('nav.logout')),
           onTap: () async {
             Navigator.pop(context);
-            final revoke = await confirm(context, title: '退出连接', message: '是否同时撤销当前移动端 API Token？', action: '撤销并退出');
+            final revoke = await confirm(context, title: context.tr('nav.logoutTitle'), message: context.tr('nav.logoutMessage'), action: context.tr('nav.logoutRevoke'));
             await state.disconnect(revoke: revoke);
           },
         ),

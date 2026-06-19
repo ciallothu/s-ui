@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'widgets.dart';
 
@@ -23,6 +24,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   bool loading = false;
   List<dynamic> usageItems = [];
   List<dynamic> statItems = [];
+  Map<String, dynamic> connectionData = {};
   int usageTotal = 0;
   int upload = 0;
   int download = 0;
@@ -31,7 +33,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    tabs = TabController(length: 2, vsync: this)..addListener(() {
+    tabs = TabController(length: 3, vsync: this)..addListener(() {
         if (!tabs.indexIsChanging) load();
       });
     load();
@@ -55,7 +57,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         'start': unixStartOfDay(start),
         'end': unixEndOfDay(end),
         'search': search.text.trim(),
-        'limit': tabs.index == 0 ? 500 : 2000,
+        'limit': tabs.index == 0 ? 500 : tabs.index == 1 ? 2000 : 500,
       };
       final api = context.read<AppState>().api!;
       if (tabs.index == 0) {
@@ -72,8 +74,13 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
       } else {
         query['resource'] = resource;
         if (user.text.trim().isNotEmpty) query['tag'] = user.text.trim();
-        final result = Map<String, dynamic>.from(await api.get('analytics/stats', query: query) as Map);
-        if (mounted) setState(() => statItems = List<dynamic>.from(result['items'] as List? ?? const []));
+        if (tabs.index == 1) {
+          final result = Map<String, dynamic>.from(await api.get('analytics/stats', query: query) as Map);
+          if (mounted) setState(() => statItems = List<dynamic>.from(result['items'] as List? ?? const []));
+        } else {
+          final result = Map<String, dynamic>.from(await api.get('analytics/connections', query: query) as Map);
+          if (mounted) setState(() => connectionData = result);
+        }
       }
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
@@ -107,14 +114,14 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const PageHeader(title: '用量与统计', subtitle: '按用户、日期与关键词筛选，支持流量汇总和原始趋势'),
-        TabBar(controller: tabs, tabs: const [Tab(text: '用户用量'), Tab(text: '流量趋势')]),
+        PageHeader(title: context.t('analytics.title'), subtitle: context.t('analytics.subtitle')),
+        TabBar(controller: tabs, tabs: [Tab(text: context.t('analytics.userUsage')), Tab(text: context.t('analytics.trafficTrends')), Tab(text: context.t('analytics.connections'))]),
         FilterCard(
           child: Column(
             children: [
               Row(
                 children: [
-                  Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: const InputDecoration(labelText: '搜索', prefixIcon: Icon(Icons.search)))),
+                  Expanded(child: TextField(controller: search, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('common.search'), prefixIcon: const Icon(Icons.search)))),
                   const SizedBox(width: 8),
                   IconButton.filledTonal(onPressed: loading ? null : load, icon: const Icon(Icons.refresh)),
                 ],
@@ -122,22 +129,23 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(child: TextField(controller: user, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: tabs.index == 0 ? '用户（精确，可留空）' : 'Tag（精确，可留空）', prefixIcon: const Icon(Icons.person_search_outlined)))),
-                  if (tabs.index == 1) ...[
+                  Expanded(child: TextField(controller: user, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('analytics.userExact'), prefixIcon: const Icon(Icons.person_search_outlined)))),
+                  if (tabs.index != 0) ...[
                     const SizedBox(width: 8),
                     Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: resource,
-                        decoration: const InputDecoration(labelText: '资源'),
-                        items: const [
-                          DropdownMenuItem(value: 'user', child: Text('用户')),
-                          DropdownMenuItem(value: 'inbound', child: Text('入站')),
-                          DropdownMenuItem(value: 'outbound', child: Text('出站')),
-                          DropdownMenuItem(value: 'endpoint', child: Text('节点')),
-                          DropdownMenuItem(value: 'all', child: Text('全部')),
+                      child: AnchoredSelect<String>(
+                        value: resource,
+                        label: context.t('analytics.resource'),
+                        options: [
+                          SelectOption('user', context.t('analytics.userUsage')),
+                          SelectOption('inbound', context.t('analytics.inbounds')),
+                          SelectOption('outbound', context.t('analytics.outbounds')),
+                          SelectOption('endpoint', context.t('analytics.nodes')),
+                          SelectOption('destination', context.t('analytics.destinations')),
+                          SelectOption('all', context.t('common.all')),
                         ],
                         onChanged: (value) {
-                          setState(() => resource = value ?? 'user');
+                          setState(() => resource = value);
                           load();
                         },
                       ),
@@ -148,9 +156,9 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(true), icon: const Icon(Icons.calendar_today_outlined), label: Text('起 ${_date(start)}'))),
+                  Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(true), icon: const Icon(Icons.calendar_today_outlined), label: Text('${context.t('common.from')} ${_date(start)}'))),
                   const SizedBox(width: 8),
-                  Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(false), icon: const Icon(Icons.event_outlined), label: Text('止 ${_date(end)}'))),
+                  Expanded(child: OutlinedButton.icon(onPressed: () => pickDate(false), icon: const Icon(Icons.event_outlined), label: Text('${context.t('common.to')} ${_date(end)}'))),
                 ],
               ),
             ],
@@ -160,7 +168,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         Expanded(
           child: error != null
               ? EmptyState(label: error!, icon: Icons.error_outline)
-              : TabBarView(controller: tabs, children: [_usage(), _stats()]),
+              : TabBarView(controller: tabs, children: [_usage(), _stats(), _connections()]),
         ),
       ],
     );
@@ -175,16 +183,16 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         children: [
           Row(
             children: [
-              Expanded(child: _SummaryCard(label: '上传', value: formatBytes(upload), color: Colors.orange)),
+              Expanded(child: _SummaryCard(label: context.t('analytics.upload'), value: formatBytes(upload), color: Colors.orange)),
               const SizedBox(width: 8),
-              Expanded(child: _SummaryCard(label: '下载', value: formatBytes(download), color: Colors.green)),
+              Expanded(child: _SummaryCard(label: context.t('analytics.download'), value: formatBytes(download), color: Colors.green)),
               const SizedBox(width: 8),
-              Expanded(child: _SummaryCard(label: '合计', value: formatBytes(upload + download), color: Colors.blue)),
+              Expanded(child: _SummaryCard(label: context.t('analytics.total'), value: formatBytes(upload + download), color: Colors.blue)),
             ],
           ),
-          Padding(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4), child: Text('$usageTotal 位用户')),
+          Padding(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4), child: Text(context.t('analytics.usersCount', args: {'count': usageTotal}))),
           if (usageItems.isEmpty)
-            const EmptyState(label: '当前筛选范围没有用量数据')
+            EmptyState(label: context.t('analytics.noUsage'))
           else
             for (final raw in usageItems) _usageCard(Map<String, dynamic>.from(raw as Map)),
         ],
@@ -210,9 +218,10 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               const SizedBox(height: 10),
               LinearProgressIndicator(value: progress),
               const SizedBox(height: 4),
-              Text('所选日期用量 / 配额 ${formatBytes(quota)}', style: Theme.of(context).textTheme.bodySmall),
+              Text(context.t('analytics.quota', args: {'quota': formatBytes(quota)}), style: Theme.of(context).textTheme.bodySmall),
             ],
-            if (_int(item['expiry']) > 0) Padding(padding: const EdgeInsets.only(top: 5), child: Text('到期 ${formatTimestamp(item['expiry'])}', style: Theme.of(context).textTheme.bodySmall)),
+            if (_int(item['expiry']) > 0) Padding(padding: const EdgeInsets.only(top: 5), child: Text(context.t('analytics.expiry', args: {'time': formatTimestamp(item['expiry'])}), style: Theme.of(context).textTheme.bodySmall)),
+            Align(alignment: Alignment.centerRight, child: TextButton.icon(onPressed: () => _showConnectionDetails('user', item['user']?.toString() ?? ''), icon: const Icon(Icons.text_snippet_outlined), label: Text(context.t('common.details')))),
           ],
         ),
       ),
@@ -220,7 +229,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   }
 
   Widget _stats() {
-    if (statItems.isEmpty) return const EmptyState(label: '当前筛选范围没有统计数据');
+    if (statItems.isEmpty) return EmptyState(label: context.t('analytics.noStats'));
     final points = statItems.map((raw) => Map<String, dynamic>.from(raw as Map)).toList();
     final uploadPoints = points.where((item) => item['direction'] == true).toList();
     final downloadPoints = points.where((item) => item['direction'] != true).toList();
@@ -236,11 +245,11 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('$resource · ${user.text.trim().isEmpty ? '全部 Tag' : user.text.trim()}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text('$resource · ${user.text.trim().isEmpty ? context.t('analytics.allTags') : user.text.trim()}', style: const TextStyle(fontWeight: FontWeight.w700)),
                   const SizedBox(height: 12),
                   SizedBox(height: 220, child: CustomPaint(painter: _TrafficPainter(uploadPoints, downloadPoints), child: const SizedBox.expand())),
                   const SizedBox(height: 8),
-                  const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.circle, size: 10, color: Colors.orange), SizedBox(width: 5), Text('上传'), SizedBox(width: 16), Icon(Icons.circle, size: 10, color: Colors.green), SizedBox(width: 5), Text('下载')]),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [const Icon(Icons.circle, size: 10, color: Colors.orange), const SizedBox(width: 5), Text(context.t('analytics.upload')), const SizedBox(width: 16), const Icon(Icons.circle, size: 10, color: Colors.green), const SizedBox(width: 5), Text(context.t('analytics.download'))]),
                 ],
               ),
             ),
@@ -257,6 +266,100 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         ],
       ),
     );
+  }
+
+  Widget _connections() {
+    final items = List<dynamic>.from(connectionData['items'] as List? ?? const []);
+    final summary = Map<String, dynamic>.from(connectionData['summary'] as Map? ?? const {});
+    return RefreshIndicator(
+      onRefresh: load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+        children: [
+          Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 8), child: Text(context.t('analytics.scanned', args: {'count': connectionData['scanned'] ?? 0}))),
+          _summaryList(context.t('analytics.userUsage'), List<dynamic>.from(summary['users'] as List? ?? const [])),
+          _summaryList(context.t('analytics.inbounds'), List<dynamic>.from(summary['inbounds'] as List? ?? const [])),
+          _summaryList(context.t('analytics.outbounds'), List<dynamic>.from(summary['outbounds'] as List? ?? const [])),
+          _summaryList(context.t('analytics.nodes'), List<dynamic>.from(summary['endpoints'] as List? ?? const [])),
+          _summaryList(context.t('analytics.destinations'), List<dynamic>.from(summary['destinations'] as List? ?? const [])),
+          if (items.isEmpty)
+            EmptyState(label: context.t('analytics.noConnections'))
+          else
+            for (final raw in items.take(100)) _connectionTile(Map<String, dynamic>.from(raw as Map)),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryList(String title, List<dynamic> values) => Card(
+        child: ExpansionTile(
+          initiallyExpanded: values.isNotEmpty,
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          children: values.isEmpty
+              ? [ListTile(title: Text(context.t('analytics.noConnections')))]
+              : [
+                  for (final raw in values.take(20))
+                    Builder(builder: (context) {
+                      final item = Map<String, dynamic>.from(raw as Map);
+                      return ListTile(
+                        dense: true,
+                        title: Text(item['tag']?.toString() ?? '—'),
+                        subtitle: Text('${context.t('analytics.lastSeen')} ${formatTimestamp(item['lastSeen'])}'),
+                        trailing: Text(item['count']?.toString() ?? '0'),
+                        onTap: () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
+                      );
+                    }),
+                ],
+        ),
+      );
+
+  Widget _connectionTile(Map<String, dynamic> item) => ListTile(
+        dense: true,
+        leading: Icon(item['resource'] == 'outbound' ? Icons.call_made : Icons.call_received),
+        title: Text('${item['resource']}/${item['protocol']}[${item['tag']}]'),
+        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['user']?.toString().isNotEmpty == true ? item['user'] : item['remote'] ?? '—'}'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
+      );
+
+  Future<void> _showConnectionDetails(String resource, String tag) async {
+    if (tag.isEmpty) return;
+    try {
+      final result = Map<String, dynamic>.from(await context.read<AppState>().api!.get('analytics/connections', query: {
+        'resource': resource,
+        'tag': tag,
+        'search': search.text.trim(),
+        'start': unixStartOfDay(start),
+        'end': unixEndOfDay(end),
+        'limit': 500,
+      }) as Map);
+      final items = List<dynamic>.from(result['items'] as List? ?? const []);
+      if (!mounted) return;
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: .75,
+          maxChildSize: .95,
+          builder: (context, controller) => ListView(
+            controller: controller,
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text('${sheetContext.t('analytics.connectionDetails')} · $resource/$tag', style: Theme.of(sheetContext).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (items.isEmpty)
+                EmptyState(label: sheetContext.t('analytics.noConnections'))
+              else
+                for (final raw in items) _connectionTile(Map<String, dynamic>.from(raw as Map)),
+            ],
+          ),
+        ),
+      );
+    } catch (exception) {
+      if (mounted) showMessage(context, exception.toString(), error: true);
+    }
   }
 }
 

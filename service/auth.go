@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -199,7 +201,7 @@ func (u *authWebUser) WebAuthnName() string                       { return u.Use
 func (u *authWebUser) WebAuthnDisplayName() string                { return u.User.Username }
 func (u *authWebUser) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
-func (s *AuthService) webAuthn() (*webauthn.WebAuthn, error) {
+func (s *AuthService) webAuthn(request *http.Request) (*webauthn.WebAuthn, error) {
 	enabled, _ := s.GetPasskeyEnabled()
 	if !enabled {
 		return nil, common.NewError("passkeys are disabled")
@@ -207,13 +209,115 @@ func (s *AuthService) webAuthn() (*webauthn.WebAuthn, error) {
 	rpID, _ := s.GetAuthSetting("passkeyRpId")
 	originsRaw, _ := s.GetAuthSetting("passkeyOrigins")
 	origins := splitSetting(originsRaw)
+	detectedOrigin := detectRequestOrigin(request)
+	if strings.TrimSpace(rpID) == "" {
+		rpID = detectRequestRPID(request, detectedOrigin)
+	}
+	if len(origins) == 0 && detectedOrigin != "" {
+		origins = []string{detectedOrigin}
+	}
 	if rpID == "" || len(origins) == 0 {
-		return nil, common.NewError("passkey RP ID and origins are required")
+		return nil, common.NewError("passkey RP ID and origins are required; leave them blank only when the panel is accessed through a valid browser origin")
 	}
 	return webauthn.New(&webauthn.Config{
 		RPDisplayName: "S-UI", RPID: rpID, RPOrigins: origins,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{ResidentKey: protocol.ResidentKeyRequirementPreferred, UserVerification: protocol.VerificationRequired},
 	})
+}
+
+func detectRequestOrigin(request *http.Request) string {
+	if request == nil {
+		return ""
+	}
+	if origin := normalizeOrigin(request.Header.Get("Origin")); origin != "" {
+		return origin
+	}
+	host, proto := forwardedHostProto(request.Header.Get("Forwarded"))
+	if host == "" {
+		host = firstHeaderValue(request.Header.Get("X-Forwarded-Host"))
+	}
+	if host == "" {
+		host = request.Host
+	}
+	if proto == "" {
+		proto = firstHeaderValue(request.Header.Get("X-Forwarded-Proto"))
+	}
+	if proto == "" {
+		if request.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	return normalizeOrigin(proto + "://" + host)
+}
+
+func detectRequestRPID(request *http.Request, origin string) string {
+	if parsed, err := url.Parse(origin); err == nil && parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	if request == nil {
+		return ""
+	}
+	host := firstHeaderValue(request.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = request.Host
+	}
+	return hostnameOnly(host)
+}
+
+func normalizeOrigin(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return ""
+	}
+	return scheme + "://" + parsed.Host
+}
+
+func forwardedHostProto(value string) (string, string) {
+	first := strings.Split(value, ",")[0]
+	var host, proto string
+	for _, part := range strings.Split(first, ";") {
+		pieces := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(pieces) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(pieces[0]))
+		raw := strings.Trim(strings.TrimSpace(pieces[1]), `"`)
+		switch key {
+		case "host":
+			host = raw
+		case "proto":
+			proto = raw
+		}
+	}
+	return host, proto
+}
+
+func firstHeaderValue(value string) string {
+	return strings.TrimSpace(strings.Split(value, ",")[0])
+}
+
+func hostnameOnly(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		return host
+	}
+	if parsed, err := url.Parse("//" + value); err == nil && parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	return strings.Trim(value, "[]")
 }
 
 func (s *AuthService) loadWebUser(username string) (*authWebUser, error) {
@@ -260,8 +364,8 @@ func takePasskeySession(id string) (passkeyPending, error) {
 	return pending, nil
 }
 
-func (s *AuthService) BeginPasskeyRegistration(username string) (interface{}, string, error) {
-	w, err := s.webAuthn()
+func (s *AuthService) BeginPasskeyRegistration(username string, request *http.Request) (interface{}, string, error) {
+	w, err := s.webAuthn(request)
 	if err != nil {
 		return nil, "", err
 	}
@@ -284,7 +388,7 @@ func (s *AuthService) FinishPasskeyRegistration(username, sessionID, name string
 	if pending.Username != username {
 		return common.NewError("passkey user mismatch")
 	}
-	w, err := s.webAuthn()
+	w, err := s.webAuthn(request)
 	if err != nil {
 		return err
 	}
@@ -306,8 +410,8 @@ func (s *AuthService) FinishPasskeyRegistration(username, sessionID, name string
 	return database.GetDB().Create(&model.PasskeyCredential{UserId: user.User.Id, Name: name, Credential: encoded, CreatedAt: time.Now().Unix()}).Error
 }
 
-func (s *AuthService) BeginPasskeyLogin(username string) (interface{}, string, error) {
-	w, err := s.webAuthn()
+func (s *AuthService) BeginPasskeyLogin(username string, request *http.Request) (interface{}, string, error) {
+	w, err := s.webAuthn(request)
 	if err != nil {
 		return nil, "", err
 	}
@@ -330,7 +434,7 @@ func (s *AuthService) FinishPasskeyLogin(sessionID string, request *http.Request
 	if err != nil {
 		return "", err
 	}
-	w, err := s.webAuthn()
+	w, err := s.webAuthn(request)
 	if err != nil {
 		return "", err
 	}
@@ -367,6 +471,23 @@ func (s *AuthService) ListPasskeys(username string) ([]model.PasskeyCredential, 
 
 func (s *AuthService) DeletePasskey(username, id string) error {
 	return database.GetDB().Where("id = ? AND user_id = (SELECT id FROM users WHERE username = ?)", id, username).Delete(&model.PasskeyCredential{}).Error
+}
+
+func (s *AuthService) RenamePasskey(username, id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return common.NewError("passkey name can not be empty")
+	}
+	result := database.GetDB().Model(&model.PasskeyCredential{}).
+		Where("id = ? AND user_id = (SELECT id FROM users WHERE username = ?)", id, username).
+		Update("name", name)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return common.NewError("passkey not found")
+	}
+	return nil
 }
 
 func (s *AuthService) SecuritySummary(username string) (map[string]interface{}, error) {

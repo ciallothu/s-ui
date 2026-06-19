@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_locale_context.dart';
 import '../state/app_state.dart';
 import 'visual_editor.dart';
 import 'widgets.dart';
@@ -64,7 +65,7 @@ class _ConfigPageState extends State<ConfigPage> with SingleTickerProviderStateM
         resource: 'config',
         initialValue: section,
         onSave: (value) async {
-          if (value is! Map) throw const FormatException('配置必须是 JSON 对象');
+          if (value is! Map) throw FormatException(context.tr('config.configObjectRequired'));
           final next = Map<String, dynamic>.from(config);
           for (final key in keys) {
             if (value.containsKey(key)) {
@@ -84,11 +85,11 @@ class _ConfigPageState extends State<ConfigPage> with SingleTickerProviderStateM
     await showDialog<bool>(
       context: context,
       builder: (_) => VisualEditorDialog(
-        title: '面板与订阅设置',
+        title: context.tr('config.panelSubscriptionSettings'),
         resource: 'settings',
         initialValue: settings,
         onSave: (value) async {
-          if (value is! Map) throw const FormatException('设置必须是 JSON 对象');
+          if (value is! Map) throw FormatException(context.tr('config.settingsObjectRequired'));
           await context.read<AppState>().saveResource('settings', 'set', value);
         },
       ),
@@ -102,26 +103,26 @@ class _ConfigPageState extends State<ConfigPage> with SingleTickerProviderStateM
     if (error != null) return EmptyState(label: error!, icon: Icons.error_outline);
     return Column(
       children: [
-        const PageHeader(title: '核心配置', subtitle: '基础、DNS、路由和面板设置保持与 Web 版同一份数据'),
+        PageHeader(title: context.t('config.title'), subtitle: context.t('config.subtitle')),
         TabBar(
           controller: tabs,
           isScrollable: true,
-          tabs: const [
-            Tab(text: '基础'),
-            Tab(text: 'DNS'),
-            Tab(text: '路由'),
-            Tab(text: '实验性'),
-            Tab(text: '面板设置'),
+          tabs: [
+            Tab(text: context.t('config.basics')),
+            const Tab(text: 'DNS'),
+            Tab(text: context.t('config.routing')),
+            Tab(text: context.t('config.experimental')),
+            Tab(text: context.t('config.panelSettings')),
           ],
         ),
         Expanded(
           child: TabBarView(
             controller: tabs,
             children: [
-              _section('基础信息', ['log', 'ntp'], Icons.settings_input_component_outlined),
+              _section(context.t('config.basicInfo'), ['log', 'ntp'], Icons.settings_input_component_outlined),
               _section('DNS', ['dns'], Icons.dns_outlined),
-              _section('路由与规则集', ['route'], Icons.route_outlined),
-              _section('Experimental', ['experimental'], Icons.science_outlined),
+              _section(context.t('config.routingRulesets'), ['route'], Icons.route_outlined),
+              _section(context.t('config.experimental'), ['experimental'], Icons.science_outlined),
               _settingsSection(),
             ],
           ),
@@ -141,7 +142,7 @@ class _ConfigPageState extends State<ConfigPage> with SingleTickerProviderStateM
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(children: [Icon(icon), const SizedBox(width: 10), Expanded(child: Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700))), FilledButton.tonalIcon(onPressed: () => editConfigSection(title, keys), icon: const Icon(Icons.edit_outlined), label: const Text('编辑'))]),
+                Row(children: [Icon(icon), const SizedBox(width: 10), Expanded(child: Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700))), FilledButton.tonalIcon(onPressed: () => editConfigSection(title, keys), icon: const Icon(Icons.edit_outlined), label: Text(context.t('config.edit')))]),
                 const SizedBox(height: 16),
                 SelectableText(const JsonEncoder.withIndent('  ').convert(value), style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
               ],
@@ -154,15 +155,15 @@ class _ConfigPageState extends State<ConfigPage> with SingleTickerProviderStateM
 
   Widget _settingsSection() {
     final groups = <String, List<String>>{
-      '面板接口': ['webListen', 'webPort', 'webPath', 'webDomain', 'webCertFile', 'webKeyFile', 'webURI', 'sessionMaxAge', 'trafficAge', 'timeLocation'],
-      '订阅服务': ['subListen', 'subPort', 'subPath', 'subDomain', 'subCertFile', 'subKeyFile', 'subUpdates', 'subEncode', 'subShowInfo', 'subInfoUpload', 'subInfoDownload', 'subInfoTotal', 'subInfoExpire', 'subInfoRemaining', 'subURI'],
-      '订阅扩展': ['subJsonExt', 'subClashExt'],
-	  '登录与身份': ['oidcEnabled', 'oidcIssuer', 'oidcClientId', 'oidcClientSecret', 'oidcRedirectUrl', 'oidcScopes', 'oidcUsernameClaim', 'oidcAllowedUsers', 'passkeyEnabled', 'passkeyRpId', 'passkeyOrigins'],
+      context.t('config.panelInterface'): ['webListen', 'webPort', 'webPath', 'webDomain', 'webCertFile', 'webKeyFile', 'webURI', 'sessionMaxAge', 'trafficAge', 'timeLocation'],
+      context.t('config.subscriptionService'): ['subListen', 'subPort', 'subPath', 'subDomain', 'subCertFile', 'subKeyFile', 'subUpdates', 'subEncode', 'subShowInfo', 'subInfoUpload', 'subInfoDownload', 'subInfoTotal', 'subInfoExpire', 'subInfoRemaining', 'subURI'],
+      context.t('config.subscriptionExtensions'): ['subJsonExt', 'subClashExt'],
+	  context.t('config.loginIdentity'): ['oidcEnabled', 'oidcIssuer', 'oidcClientId', 'oidcClientSecret', 'oidcRedirectUrl', 'oidcScopes', 'oidcUsernameClaim', 'oidcAllowedUsers', 'passkeyEnabled', 'passkeyRpId', 'passkeyOrigins'],
     };
     return ListView(
       padding: const EdgeInsets.all(12),
       children: [
-        Align(alignment: Alignment.centerRight, child: FilledButton.icon(onPressed: editSettings, icon: const Icon(Icons.edit_outlined), label: const Text('编辑全部设置'))),
+        Align(alignment: Alignment.centerRight, child: FilledButton.icon(onPressed: editSettings, icon: const Icon(Icons.edit_outlined), label: Text(context.t('config.editAllSettings')))),
         const SizedBox(height: 8),
         for (final group in groups.entries)
           Card(
