@@ -71,8 +71,13 @@ class _ResourcePageState extends State<ResourcePage> {
         resource: widget.resource,
         initialValue: item,
         onSave: (value) async {
-          await context.read<AppState>().saveResource(widget.resource, action, value);
+          await context.read<AppState>().saveResource(widget.resource, action, value, apply: true);
         },
+        onSaveOnly: widget.resource == 'endpoints'
+            ? (value) async {
+                await context.read<AppState>().saveResource(widget.resource, action, value, apply: false);
+              }
+            : null,
       ),
     );
     await load();
@@ -190,38 +195,16 @@ class _ResourcePageState extends State<ResourcePage> {
 
   Future<void> showWireguardQr(Map<String, dynamic> item) async {
     final peers = item['peers'];
-    final ext = item['ext'];
-    if (peers is! List || ext is! Map) {
+    if (peers is! List) {
       showMessage(context, context.tr('resource.noWireguardPeers'), error: true);
       return;
     }
-    final host = Uri.tryParse(context.read<AppState>().profile?.normalizedBaseUrl ?? '')?.host ?? '';
     final values = <_QrValue>[];
     for (var index = 0; index < peers.length; index++) {
-      final peer = peers[index];
-      if (peer is! Map) continue;
-      final keys = ext['keys'];
-      Map? keyPair;
-      if (keys is List) {
-        for (final key in keys) {
-          if (key is Map && key['public_key'] == peer['public_key']) keyPair = key;
-        }
-      }
-      if (keyPair == null || ext['public_key'] == null) continue;
-      final buffer = StringBuffer()
-        ..writeln('[Interface]')
-        ..writeln('PrivateKey = ${keyPair['private_key']}')
-        ..writeln('Address = ${(peer['allowed_ips'] as List? ?? const []).join(',')}')
-        ..writeln('DNS = ${ext['dns'] ?? '1.1.1.1, 9.9.9.9'}');
-      if (item['mtu'] != null) buffer.writeln('MTU = ${item['mtu']}');
-      buffer
-        ..writeln('\n[Peer]')
-        ..writeln('PublicKey = ${ext['public_key']}')
-        ..writeln('AllowedIPs = 0.0.0.0/0, ::/0')
-        ..writeln('Endpoint = $host:${item['listen_port']}');
-      if (peer['pre_shared_key'] != null) buffer.writeln('PresharedKey = ${peer['pre_shared_key']}');
-      if (peer['persistent_keepalive_interval'] != null) buffer.writeln('PersistentKeepalive = ${peer['persistent_keepalive_interval']}');
-      values.add(_QrValue('Peer ${index + 1}', buffer.toString()));
+      final result = Map<String, dynamic>.from(
+        await context.read<AppState>().api!.post('wireguard/export', data: {'tag': item['tag'], 'peerIndex': index}) as Map,
+      );
+      values.add(_QrValue(result['name']?.toString() ?? context.tr('resource.wireguardPeer', args: {'index': index + 1}), result['config']?.toString() ?? ''));
     }
     await _showQrValues('${item['tag']} · WireGuard', values);
   }

@@ -7,7 +7,8 @@ import 'package:intl/intl.dart';
 import '../core/app_locale_context.dart';
 
 const _selectMenuRadius = BorderRadius.all(Radius.circular(16));
-const _selectMenuMaxHeight = kMinInteractiveDimension * 4 + 8;
+const _selectMenuRowHeight = kMinInteractiveDimension;
+const _selectMenuMaxRows = 5;
 
 class SelectOption<T> {
   const SelectOption(this.value, this.label);
@@ -16,7 +17,7 @@ class SelectOption<T> {
   final String label;
 }
 
-class AnchoredSelect<T> extends StatelessWidget {
+class AnchoredSelect<T> extends StatefulWidget {
   const AnchoredSelect({
     super.key,
     required this.value,
@@ -37,56 +38,171 @@ class AnchoredSelect<T> extends StatelessWidget {
   final bool compact;
 
   @override
+  State<AnchoredSelect<T>> createState() => _AnchoredSelectState<T>();
+}
+
+class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
+  final LayerLink _layerLink = LayerLink();
+  final GlobalKey _targetKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
+  OverlayEntry? _overlayEntry;
+  double _menuWidth = 0;
+  double _menuHeight = 0;
+
+  bool get _isOpen => _overlayEntry != null;
+
+  @override
+  void dispose() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant AnchoredSelect<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_isOpen && oldWidget.options != widget.options) {
+      _close();
+    }
+  }
+
+  void _toggle() => _isOpen ? _close() : _open();
+
+  void _open() {
+    final target = _targetKey.currentContext?.findRenderObject() as RenderBox?;
+    if (target == null || !target.hasSize || widget.options.isEmpty) return;
+    final media = MediaQuery.of(context);
+    final targetBottom = target.localToGlobal(Offset(0, target.size.height)).dy;
+    final availableBelow = media.size.height - media.padding.bottom - targetBottom - 8;
+    _menuWidth = target.size.width;
+    _menuHeight = math.min(
+      math.min(widget.options.length, _selectMenuMaxRows) * _selectMenuRowHeight,
+      math.max(_selectMenuRowHeight, availableBelow),
+    );
+    _overlayEntry = OverlayEntry(builder: _buildOverlay);
+    Overlay.of(context, rootOverlay: true).insert(_overlayEntry!);
+    setState(() {});
+  }
+
+  void _close() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    if (mounted) setState(() {});
+  }
+
+  Widget _buildOverlay(BuildContext overlayContext) {
+    final rtl = Directionality.of(context) == TextDirection.rtl;
+    final colors = Theme.of(context).colorScheme;
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: _close,
+          ),
+        ),
+        CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          targetAnchor: rtl ? Alignment.bottomRight : Alignment.bottomLeft,
+          followerAnchor: rtl ? Alignment.topRight : Alignment.topLeft,
+          offset: const Offset(0, 4),
+          child: SizedBox(
+            key: const ValueKey('anchored-select-menu'),
+            width: _menuWidth,
+            height: _menuHeight,
+            child: Material(
+              color: colors.surfaceContainerHigh,
+              elevation: 8,
+              shadowColor: colors.shadow,
+              shape: const RoundedRectangleBorder(borderRadius: _selectMenuRadius),
+              clipBehavior: Clip.antiAlias,
+              child: Scrollbar(
+                controller: _scrollController,
+                thumbVisibility: widget.options.length > _selectMenuMaxRows,
+                interactive: true,
+                thickness: 4,
+                radius: const Radius.circular(8),
+                child: ListView.builder(
+                  controller: _scrollController,
+                  padding: EdgeInsets.zero,
+                  primary: false,
+                  itemExtent: _selectMenuRowHeight,
+                  itemCount: widget.options.length,
+                  itemBuilder: (context, index) {
+                    final option = widget.options[index];
+                    final selected = option.value == widget.value;
+                    return DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: selected ? colors.secondaryContainer.withValues(alpha: .72) : null,
+                        border: index == widget.options.length - 1
+                            ? null
+                            : Border(bottom: BorderSide(color: colors.outlineVariant)),
+                      ),
+                      child: InkWell(
+                        onTap: () {
+                          _close();
+                          widget.onChanged(option.value);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Row(
+                            children: [
+                              SizedBox(width: 24, child: selected ? const Icon(Icons.check, size: 20) : null),
+                              const SizedBox(width: 8),
+                              Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     SelectOption<T>? selected;
-    for (final option in options) {
-      if (option.value == value) {
+    for (final option in widget.options) {
+      if (option.value == widget.value) {
         selected = option;
         break;
       }
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) => MenuAnchor(
-        crossAxisUnconstrained: false,
-        style: MenuStyle(
-          minimumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, 0)),
-          maximumSize: WidgetStatePropertyAll(Size(constraints.maxWidth, _selectMenuMaxHeight)),
-          padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(vertical: 4)),
-          shape: const WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: _selectMenuRadius)),
-        ),
-        builder: (context, controller, child) => InkWell(
+    return CompositedTransformTarget(
+      key: _targetKey,
+      link: _layerLink,
+      child: InkWell(
           borderRadius: _selectMenuRadius,
-          onTap: controller.isOpen ? controller.close : controller.open,
+          onTap: _toggle,
           child: InputDecorator(
             isEmpty: selected == null,
             decoration: InputDecoration(
-              labelText: label,
-              helperText: helperText,
-              prefixIcon: prefixIcon,
-              isDense: compact,
-              border: compact ? InputBorder.none : null,
-              contentPadding: compact ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8) : null,
+              labelText: widget.label,
+              helperText: widget.helperText,
+              prefixIcon: widget.prefixIcon,
+              isDense: widget.compact,
+              border: widget.compact ? InputBorder.none : null,
+              contentPadding: widget.compact ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8) : null,
             ),
             child: Row(
-              mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
+              mainAxisSize: widget.compact ? MainAxisSize.min : MainAxisSize.max,
               children: [
                 Flexible(child: Text(selected?.label ?? '', overflow: TextOverflow.ellipsis)),
                 const SizedBox(width: 4),
-                Icon(controller.isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down),
+                Icon(_isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down),
               ],
             ),
           ),
         ),
-        menuChildren: [
-          for (final option in options)
-            MenuItemButton(
-              leadingIcon: option.value == value ? const Icon(Icons.check, size: 18) : const SizedBox(width: 18),
-              onPressed: () => onChanged(option.value),
-              child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-      ),
     );
   }
 }

@@ -35,6 +35,7 @@ type resourceMutation struct {
 	Action    string          `json:"action"`
 	Data      json.RawMessage `json:"data"`
 	InitUsers []uint          `json:"initUsers,omitempty"`
+	Apply     *bool           `json:"apply,omitempty"`
 }
 
 func NewAPIv3Handler(g *gin.RouterGroup, apiv2 *APIv2Handler) *APIv3Handler {
@@ -64,6 +65,7 @@ func (a *APIv3Handler) initRouter(g *gin.RouterGroup) {
 
 	protected.GET("/resources/:resource", a.getResource)
 	protected.POST("/resources/:resource", a.saveResource)
+	protected.POST("/wireguard/export", a.exportWireGuard)
 
 	protected.GET("/status", a.status)
 	protected.GET("/onlines", a.onlines)
@@ -200,7 +202,7 @@ func (a *APIv3Handler) logout(c *gin.Context) {
 func (a *APIv3Handler) meta(c *gin.Context) {
 	v3OK(c, gin.H{
 		"apiVersion": "3", "panelVersion": config.GetVersion(), "panelName": config.GetName(),
-		"features": []string{"resources", "usage-filter", "stats-filter", "structured-logs", "audit", "backup", "totp", "oidc", "passkey"},
+		"features": []string{"resources", "usage-filter", "stats-filter", "structured-logs", "audit", "backup", "totp", "oidc", "passkey", "wireguard-export", "transactional-apply"},
 	})
 }
 
@@ -381,7 +383,11 @@ func (a *APIv3Handler) saveResource(c *gin.Context) {
 	for _, id := range body.InitUsers {
 		initUsers = append(initUsers, strconv.FormatUint(uint64(id), 10))
 	}
-	changed, err := a.ConfigService.Save(resource, body.Action, body.Data, strings.Join(initUsers, ","), apiUsername(c), getHostname(c))
+	apply := true
+	if body.Apply != nil {
+		apply = *body.Apply
+	}
+	changed, err := a.ConfigService.SaveWithApply(resource, body.Action, body.Data, strings.Join(initUsers, ","), apiUsername(c), getHostname(c), apply)
 	if err != nil {
 		v3Error(c, http.StatusBadRequest, err)
 		return
@@ -411,7 +417,11 @@ func (a *APIv3Handler) saveResourceBulk(c *gin.Context, resource string, body re
 		return
 	}
 	for index, item := range items {
-		if _, err := a.ConfigService.Save(resource, action, item, "", apiUsername(c), getHostname(c)); err != nil {
+		apply := true
+		if body.Apply != nil {
+			apply = *body.Apply
+		}
+		if _, err := a.ConfigService.SaveWithApply(resource, action, item, "", apiUsername(c), getHostname(c), apply); err != nil {
 			v3Error(c, http.StatusBadRequest, common.NewErrorf("bulk item %d failed: %v", index+1, err))
 			return
 		}
@@ -422,6 +432,23 @@ func (a *APIv3Handler) saveResourceBulk(c *gin.Context, resource string, body re
 		return
 	}
 	v3OK(c, gin.H{"changed": []string{resource}, "resources": gin.H{resource: value}, "processed": len(items)})
+}
+
+func (a *APIv3Handler) exportWireGuard(c *gin.Context) {
+	var body struct {
+		Tag       string `json:"tag"`
+		PeerIndex int    `json:"peerIndex"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	result, err := a.EndpointService.ExportWireGuardPeer(strings.TrimSpace(body.Tag), body.PeerIndex)
+	if err != nil {
+		v3Error(c, http.StatusBadRequest, err)
+		return
+	}
+	v3OK(c, result)
 }
 
 func (a *APIv3Handler) status(c *gin.Context) {

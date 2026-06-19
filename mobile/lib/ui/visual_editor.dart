@@ -16,6 +16,7 @@ class VisualEditorDialog extends StatefulWidget {
     required this.resource,
     required this.initialValue,
     required this.onSave,
+    this.onSaveOnly,
     this.actionLabel = '',
   });
 
@@ -23,6 +24,7 @@ class VisualEditorDialog extends StatefulWidget {
   final String resource;
   final dynamic initialValue;
   final Future<void> Function(dynamic value) onSave;
+  final Future<void> Function(dynamic value)? onSaveOnly;
   final String actionLabel;
 
   @override
@@ -68,7 +70,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
     setState(() => mode = next);
   }
 
-  Future<void> save() async {
+  Future<void> save({bool apply = true}) async {
     dynamic next = value;
     if (mode == _EditorMode.json) {
       try {
@@ -83,7 +85,11 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
       error = null;
     });
     try {
-      await widget.onSave(next);
+      if (!apply && widget.onSaveOnly != null) {
+        await widget.onSaveOnly!(next);
+      } else {
+        await widget.onSave(next);
+      }
       if (mounted) Navigator.pop(context, true);
     } catch (exception) {
       if (mounted) setState(() => error = exception.toString());
@@ -102,12 +108,24 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
           title: Text(widget.title),
           leading: IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
           actions: [
+            if (widget.onSaveOnly != null)
+              TextButton.icon(
+                onPressed: saving ? null : () => save(apply: false),
+                icon: const Icon(Icons.save_outlined),
+                label: Text(context.t('common.save')),
+              ),
             TextButton.icon(
-              onPressed: saving ? null : save,
+              onPressed: saving ? null : () => save(),
               icon: saving
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.save_outlined),
-              label: Text(widget.actionLabel.isEmpty ? context.t('common.save') : widget.actionLabel),
+              label: Text(
+                widget.actionLabel.isNotEmpty
+                    ? widget.actionLabel
+                    : widget.onSaveOnly != null
+                        ? context.t('common.saveAndApply')
+                        : context.t('common.save'),
+              ),
             ),
           ],
         ),
@@ -256,7 +274,13 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                   value: current,
                   label: label,
                   helperText: key,
-                  options: [for (final option in values) SelectOption(option, schema.optionLabel(option))],
+                  options: [
+                    for (final option in values)
+                      SelectOption(
+                        option,
+                        context.t('option.$option') == 'option.$option' ? schema.optionLabel(option) : context.t('option.$option'),
+                      ),
+                  ],
                   onChanged: (next) {
                     setState(() {
                       if (parentPath.isEmpty && key == 'type' && value is Map) {
@@ -521,6 +545,8 @@ class VisualEditorSchema {
     if (key == 'type' && path.contains('rules')) return const ['simple', 'logical'];
     if (key == 'action') return const ['route', 'route-options', 'reject', 'hijack-dns', 'sniff', 'resolve', 'bypass', 'predefined'];
     if (key == 'mode') return const ['and', 'or', 'rule', 'global', 'direct'];
+    if (key == 'peer_mode') return const ['roaming_client', 'static_peer', 'site_to_site'];
+    if (key == 'client_route_preset') return const ['virtual_network', 'single_peer', 'custom', 'full_tunnel'];
     if (key == 'network') return const ['tcp', 'udp'];
     if (key == 'strategy') return const ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'];
     if (key == 'level') return const ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'panic'];
@@ -563,7 +589,17 @@ class VisualEditorSchema {
   bool isObjectList(String path) => path.endsWith('.peers') || path.endsWith('.users') || path.endsWith('.links') || path.endsWith('.rules') || path.endsWith('.rule_set') || path.endsWith('.servers') || path == 'peers' || path == 'users' || path == 'links' || path == 'rules' || path == 'rule_set' || path == 'servers';
 
   dynamic listItemDefault(String path) {
-    if (path.endsWith('peers') || path == 'peers') return {'server': '', 'server_port': 443, 'public_key': '', 'allowed_ips': <String>[]};
+    if (path.endsWith('peers') || path == 'peers') {
+      if (resource == 'endpoints') {
+        return {
+          'name': '', 'peer_mode': 'roaming_client', 'public_key': '', 'client_private_key': '',
+          'assigned_ipv4': '', 'assigned_ipv6': '', 'server_allowed_ips': <String>[], 'allowed_ips': <String>[],
+          'client_route_preset': 'virtual_network', 'client_allowed_ips': <String>[], 'client_dns': <String>[],
+          'client_mtu': 1420, 'client_keepalive': 25, 'include_ipv4': true, 'include_ipv6': true,
+        };
+      }
+      return {'server': '', 'server_port': 443, 'public_key': '', 'allowed_ips': <String>[]};
+    }
     if (path.endsWith('links') || path == 'links') return {'type': 'external', 'remark': '', 'uri': ''};
     if (path.endsWith('users') || path == 'users') return {'name': '', 'token': ''};
     if (path.endsWith('rule_set') || path == 'rule_set') return {'type': 'remote', 'tag': '', 'format': 'binary', 'url': ''};
@@ -665,7 +701,23 @@ class VisualEditorSchema {
     if (resource == 'endpoints') {
       final base = <String, dynamic>{'id': 0, 'type': type, 'tag': ''};
       final detail = <String, Map<String, dynamic>>{
-        'wireguard': {'address': ['10.0.0.2/32', 'fe80::2/128'], 'private_key': '', 'listen_port': 0, 'peers': <dynamic>[]},
+        'wireguard': {
+          'wireguard_schema': 2,
+          'address': ['10.66.66.1/32', 'fd66:66:66::1/128'],
+          'tunnel_ipv4_cidr': '10.66.66.0/24',
+          'tunnel_ipv6_cidr': 'fd66:66:66::/64',
+          'private_key': '',
+          'listen_port': 0,
+          'advertised_endpoint_host': '',
+          'advertised_endpoint_port': 0,
+          'peer_to_peer_enabled': false,
+          'default_client_allowed_ips': ['10.66.66.0/24', 'fd66:66:66::/64'],
+          'default_client_dns': <String>[],
+          'default_client_mtu': 1420,
+          'default_client_keepalive': 25,
+          'system': false,
+          'peers': <dynamic>[],
+        },
         'warp': {'address': <String>[], 'private_key': '', 'listen_port': 0, 'mtu': 1420, 'peers': [{'server': '', 'server_port': 0, 'public_key': '', 'allowed_ips': <String>[]}]},
         'tailscale': {'domain_resolver': 'local', 'state_directory': '', 'auth_key': '', 'accept_routes': false, 'advertise_routes': <String>[]},
       };

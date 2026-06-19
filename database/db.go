@@ -106,6 +106,7 @@ func InitDB(dbPath string) error {
 		&model.Outbound{},
 		&model.Service{},
 		&model.Endpoint{},
+		&model.ManagedRouteRule{},
 		&model.User{},
 		&model.PasskeyCredential{},
 		&model.Tokens{},

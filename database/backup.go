@@ -55,6 +55,7 @@ func GetDb(exclude string) ([]byte, error) {
 		&model.Inbound{},
 		&model.Outbound{},
 		&model.Endpoint{},
+		&model.ManagedRouteRule{},
 		&model.Service{},
 		&model.User{},
 		&model.PasskeyCredential{},
@@ -72,6 +73,7 @@ func GetDb(exclude string) ([]byte, error) {
 	var inbound []model.Inbound
 	var outbound []model.Outbound
 	var endpoint []model.Endpoint
+	var managedRoutes []model.ManagedRouteRule
 	var services []model.Service
 	var users []model.User
 	var passkeys []model.PasskeyCredential
@@ -113,6 +115,13 @@ func GetDb(exclude string) ([]byte, error) {
 		return nil, err
 	} else if len(endpoint) > 0 {
 		if err := backupDb.Save(endpoint).Error; err != nil {
+			return nil, err
+		}
+	}
+	if err := db.Model(&model.ManagedRouteRule{}).Scan(&managedRoutes).Error; err != nil {
+		return nil, err
+	} else if len(managedRoutes) > 0 {
+		if err := backupDb.Save(managedRoutes).Error; err != nil {
 			return nil, err
 		}
 	}

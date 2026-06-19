@@ -46,6 +46,8 @@ func (a *APIv2Handler) postHandler(c *gin.Context) {
 	switch action {
 	case "save":
 		a.ApiService.Save(c, username)
+	case "wireguardExport":
+		a.ApiService.ExportWireGuard(c)
 	case "restartApp":
 		a.ApiService.RestartApp(c)
 	case "restartSb":

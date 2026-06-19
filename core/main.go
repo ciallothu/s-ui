@@ -52,6 +52,7 @@ func (c *Core) Start(sbConfig []byte) error {
 	err := opt.UnmarshalJSONContext(globalCtx, sbConfig)
 	if err != nil {
 		logger.Error("Unmarshal config err:", err.Error())
+		return err
 	}
 
 	c.instance, err = NewBox(Options{
@@ -68,6 +69,7 @@ func (c *Core) Start(sbConfig []byte) error {
 		c.instance = nil
 		return err
 	}
+	factory = c.instance.logFactory
 
 	globalCtx = service.ContextWith(globalCtx, c)
 	inbound_manager = service.FromContext[adapter.InboundManager](globalCtx)
@@ -78,6 +80,23 @@ func (c *Core) Start(sbConfig []byte) error {
 
 	c.isRunning = true
 	return nil
+}
+
+// ValidateConfig parses and constructs the complete embedded sing-box
+// configuration without opening listeners. It uses the exact registries and
+// sing-box version used by the running panel.
+func (c *Core) ValidateConfig(sbConfig []byte) error {
+	ctx := context.Background()
+	ctx = sb.Context(ctx, InboundRegistry(), OutboundRegistry(), EndpointRegistry(), DNSTransportRegistry(), ServiceRegistry())
+	var opt option.Options
+	if err := opt.UnmarshalJSONContext(ctx, sbConfig); err != nil {
+		return err
+	}
+	instance, err := NewBox(Options{Context: ctx, Options: opt})
+	if err != nil {
+		return err
+	}
+	return instance.Close()
 }
 
 func (c *Core) Stop() error {

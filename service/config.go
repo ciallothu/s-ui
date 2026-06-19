@@ -2,7 +2,9 @@ package service
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +13,8 @@ import (
 	"github.com/alireza0/s-ui/database/model"
 	"github.com/alireza0/s-ui/logger"
 	"github.com/alireza0/s-ui/util/common"
+
+	"gorm.io/gorm"
 )
 
 var (
@@ -50,9 +54,17 @@ func NewConfigService(core *core.Core) *ConfigService {
 }
 
 func (s *ConfigService) GetConfig(data string) (*[]byte, error) {
+	return s.getConfigWithDB(database.GetDB(), data)
+}
+
+func (s *ConfigService) getConfigWithDB(db *gorm.DB, data string) (*[]byte, error) {
 	var err error
 	if len(data) == 0 {
-		data, err = s.SettingService.GetConfig()
+		err = db.Model(&model.Setting{}).Select("value").Where("key = ?", "config").First(&data).Error
+		if database.IsNotFound(err) {
+			data = defaultConfig
+			err = nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -63,19 +75,23 @@ func (s *ConfigService) GetConfig(data string) (*[]byte, error) {
 		return nil, err
 	}
 
-	singboxConfig.Inbounds, err = s.InboundService.GetAllConfig(database.GetDB())
+	singboxConfig.Inbounds, err = s.InboundService.GetAllConfig(db)
 	if err != nil {
 		return nil, err
 	}
-	singboxConfig.Outbounds, err = s.OutboundService.GetAllConfig(database.GetDB())
+	singboxConfig.Outbounds, err = s.OutboundService.GetAllConfig(db)
 	if err != nil {
 		return nil, err
 	}
-	singboxConfig.Services, err = s.ServicesService.GetAllConfig(database.GetDB())
+	singboxConfig.Services, err = s.ServicesService.GetAllConfig(db)
 	if err != nil {
 		return nil, err
 	}
-	singboxConfig.Endpoints, err = s.EndpointService.GetAllConfig(database.GetDB())
+	singboxConfig.Endpoints, err = s.EndpointService.GetAllConfig(db)
+	if err != nil {
+		return nil, err
+	}
+	singboxConfig.Route, err = injectManagedRoutes(db, singboxConfig.Route)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +149,33 @@ func (s *ConfigService) RestartCore() error {
 	return s.StartCore()
 }
 
+func (s *ConfigService) restartCoreWithRaw(config []byte) error {
+	startCoreMu.Lock()
+	if startCoreInProgress {
+		startCoreMu.Unlock()
+		return common.NewError("sing-box configuration is already being applied")
+	}
+	startCoreInProgress = true
+	startCoreMu.Unlock()
+	defer func() {
+		startCoreMu.Lock()
+		startCoreInProgress = false
+		startCoreMu.Unlock()
+	}()
+	if corePtr.IsRunning() {
+		if err := corePtr.Stop(); err != nil {
+			return err
+		}
+	}
+	if err := corePtr.Start(config); err != nil {
+		return err
+	}
+	if !corePtr.IsRunning() {
+		return common.NewError("sing-box did not report a running state after apply")
+	}
+	return nil
+}
+
 func (s *ConfigService) restartCoreWithConfig(config json.RawMessage) error {
 	startCoreMu.Lock()
 	if startCoreInProgress {
@@ -186,6 +229,13 @@ func (s *ConfigService) CheckOutbound(tag string, link string) core.CheckOutboun
 }
 
 func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initUsers string, loginUser string, hostname string) ([]string, error) {
+	return s.SaveWithApply(obj, act, data, initUsers, loginUser, hostname, true)
+}
+
+func (s *ConfigService) SaveWithApply(obj string, act string, data json.RawMessage, initUsers string, loginUser string, hostname string, apply bool) ([]string, error) {
+	if obj == "endpoints" {
+		return s.saveEndpointWithApply(act, data, loginUser, apply)
+	}
 	var err error
 	var objs []string = []string{obj}
 
@@ -224,8 +274,6 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		err = s.OutboundService.Save(tx, act, data)
 	case "services":
 		err = s.ServicesService.Save(tx, act, data)
-	case "endpoints":
-		err = s.EndpointService.Save(tx, act, data)
 	case "config":
 		err = s.SettingService.SaveConfig(tx, data)
 		if err != nil {
@@ -249,7 +297,7 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 		Actor:    loginUser,
 		Key:      obj,
 		Action:   act,
-		Obj:      data,
+		Obj:      redactChangeData(data),
 	}).Error
 	if err != nil {
 		return nil, err
@@ -258,6 +306,138 @@ func (s *ConfigService) Save(obj string, act string, data json.RawMessage, initU
 	LastUpdate = time.Now().Unix()
 
 	return objs, nil
+}
+
+func (s *ConfigService) saveEndpointWithApply(act string, data json.RawMessage, loginUser string, apply bool) ([]string, error) {
+	oldConfig, oldConfigErr := s.GetConfig("")
+	if oldConfigErr != nil {
+		return nil, oldConfigErr
+	}
+	tx := database.GetDB().Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	rollback := func() { _ = tx.Rollback().Error }
+	if err := s.EndpointService.Save(tx, act, data); err != nil {
+		rollback()
+		return nil, err
+	}
+	stagedConfig, err := s.getConfigWithDB(tx, "")
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	if err = corePtr.ValidateConfig(*stagedConfig); err != nil {
+		rollback()
+		return nil, common.NewErrorf("sing-box configuration check failed: %v", err)
+	}
+	if err = tx.Create(&model.Changes{
+		DateTime: time.Now().Unix(), Actor: loginUser, Key: "endpoints", Action: act, Obj: redactChangeData(data),
+	}).Error; err != nil {
+		rollback()
+		return nil, err
+	}
+	if apply {
+		if err = s.restartCoreWithRaw(*stagedConfig); err != nil {
+			rollback()
+			if rollbackErr := s.restartCoreWithRaw(*oldConfig); rollbackErr != nil {
+				return nil, common.NewErrorf("apply failed: %v; restoring the previous runtime also failed: %v", err, rollbackErr)
+			}
+			return nil, common.NewErrorf("apply failed and the previous runtime was restored: %v", err)
+		}
+	}
+	if err = tx.Commit().Error; err != nil {
+		if apply {
+			_ = s.restartCoreWithRaw(*oldConfig)
+		}
+		return nil, err
+	}
+	LastUpdate = time.Now().Unix()
+	return []string{"endpoints"}, nil
+}
+
+func redactChangeData(data json.RawMessage) json.RawMessage {
+	var value interface{}
+	if json.Unmarshal(data, &value) != nil {
+		return data
+	}
+	var redact func(interface{})
+	redact = func(current interface{}) {
+		switch typed := current.(type) {
+		case map[string]interface{}:
+			for key, child := range typed {
+				lower := strings.ToLower(key)
+				if strings.Contains(lower, "private_key") || strings.Contains(lower, "pre_shared_key") || strings.Contains(lower, "preshared") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") {
+					typed[key] = "[redacted]"
+					continue
+				}
+				redact(child)
+			}
+		case []interface{}:
+			for _, child := range typed {
+				redact(child)
+			}
+		}
+	}
+	redact(value)
+	redacted, err := json.Marshal(value)
+	if err != nil {
+		return data
+	}
+	return redacted
+}
+
+func injectManagedRoutes(db *gorm.DB, raw json.RawMessage) (json.RawMessage, error) {
+	route := map[string]interface{}{}
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &route); err != nil {
+			return nil, err
+		}
+	}
+	rules := listValue(route["rules"])
+	var managed []model.ManagedRouteRule
+	if err := db.Order("managed_key asc").Find(&managed).Error; err != nil {
+		return nil, err
+	}
+	for _, item := range managed {
+		cidrs := make([]string, 0, 2)
+		if item.IPv4CIDR != "" {
+			cidrs = append(cidrs, item.IPv4CIDR)
+		}
+		if item.IPv6CIDR != "" {
+			cidrs = append(cidrs, item.IPv6CIDR)
+		}
+		if len(cidrs) == 0 || containsManagedRoute(rules, item.EndpointTag, cidrs) {
+			continue
+		}
+		rules = append(rules, map[string]interface{}{
+			"inbound": []string{item.EndpointTag}, "ip_cidr": cidrs,
+			"action": "route", "outbound": item.EndpointTag,
+		})
+	}
+	route["rules"] = rules
+	return json.Marshal(route)
+}
+
+func containsManagedRoute(rules []interface{}, tag string, cidrs []string) bool {
+	wanted := append([]string(nil), cidrs...)
+	sort.Strings(wanted)
+	for _, rawRule := range rules {
+		rule := mapValue(rawRule)
+		if rule == nil || stringValue(rule["action"]) != "route" || stringValue(rule["outbound"]) != tag {
+			continue
+		}
+		inbounds := stringsValue(rule["inbound"])
+		if len(inbounds) != 1 || inbounds[0] != tag {
+			continue
+		}
+		actual := stringsValue(rule["ip_cidr"])
+		sort.Strings(actual)
+		if strings.Join(actual, "\x00") == strings.Join(wanted, "\x00") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ConfigService) CheckChanges(lu string) (bool, error) {

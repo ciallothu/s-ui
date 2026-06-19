@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"os"
 
 	"github.com/alireza0/s-ui/database"
 	"github.com/alireza0/s-ui/database/model"
@@ -28,16 +27,25 @@ func (o *EndpointService) GetAll() (*[]map[string]interface{}, error) {
 			"id":   endpoint.Id,
 			"type": endpoint.Type,
 			"tag":  endpoint.Tag,
-			"ext":  endpoint.Ext,
 		}
+		var ext interface{}
+		if len(endpoint.Ext) > 0 && string(endpoint.Ext) != "null" {
+			if err := json.Unmarshal(endpoint.Ext, &ext); err != nil {
+				return nil, err
+			}
+		}
+		epData["ext"] = ext
 		if endpoint.Options != nil {
-			var restFields map[string]json.RawMessage
+			var restFields map[string]interface{}
 			if err := json.Unmarshal(endpoint.Options, &restFields); err != nil {
 				return nil, err
 			}
 			for k, v := range restFields {
 				epData[k] = v
 			}
+		}
+		if endpoint.Type == "wireguard" {
+			redactWireGuardSecrets(epData)
 		}
 		data = append(data, epData)
 	}
@@ -66,6 +74,25 @@ func (s *EndpointService) Save(tx *gorm.DB, act string, data json.RawMessage) er
 
 	switch act {
 	case "new", "edit":
+		var oldEndpoint *model.Endpoint
+		if act == "edit" {
+			oldEndpoint = &model.Endpoint{}
+			var idHolder struct {
+				Id uint `json:"id"`
+			}
+			_ = json.Unmarshal(data, &idHolder)
+			if err = tx.First(oldEndpoint, idHolder.Id).Error; err != nil {
+				return err
+			}
+			data, err = mergeWireGuardSecrets(data, oldEndpoint)
+			if err != nil {
+				return err
+			}
+		}
+		data, err = normalizeAndValidateWireGuard(data)
+		if err != nil {
+			return err
+		}
 		var endpoint model.Endpoint
 		err = endpoint.UnmarshalJSON(data)
 		if err != nil {
@@ -91,30 +118,16 @@ func (s *EndpointService) Save(tx *gorm.DB, act string, data json.RawMessage) er
 			}
 		}
 
-		if corePtr.IsRunning() {
-			configData, err := endpoint.MarshalJSON()
-			if err != nil {
-				return err
-			}
-			if act == "edit" {
-				var oldTag string
-				err = tx.Model(model.Endpoint{}).Select("tag").Where("id = ?", endpoint.Id).Find(&oldTag).Error
-				if err != nil {
-					return err
-				}
-				err = corePtr.RemoveEndpoint(oldTag)
-				if err != nil && err != os.ErrInvalid {
-					return err
-				}
-			}
-			err = corePtr.AddEndpoint(configData)
-			if err != nil {
+		err = tx.Save(&endpoint).Error
+		if err != nil {
+			return err
+		}
+		if oldEndpoint != nil && oldEndpoint.Tag != endpoint.Tag {
+			if err = tx.Where("endpoint_tag = ?", oldEndpoint.Tag).Delete(&model.ManagedRouteRule{}).Error; err != nil {
 				return err
 			}
 		}
-
-		err = tx.Save(&endpoint).Error
-		if err != nil {
+		if err = syncWireGuardManagedRoute(tx, &endpoint); err != nil {
 			return err
 		}
 	case "del":
@@ -123,11 +136,8 @@ func (s *EndpointService) Save(tx *gorm.DB, act string, data json.RawMessage) er
 		if err != nil {
 			return err
 		}
-		if corePtr.IsRunning() {
-			err = corePtr.RemoveEndpoint(tag)
-			if err != nil && err != os.ErrInvalid {
-				return err
-			}
+		if err = tx.Where("endpoint_tag = ?", tag).Delete(&model.ManagedRouteRule{}).Error; err != nil {
+			return err
 		}
 		err = tx.Where("tag = ?", tag).Delete(model.Endpoint{}).Error
 		if err != nil {

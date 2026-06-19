@@ -318,7 +318,11 @@ func (a *ApiService) Save(c *gin.Context, loginUser string) {
 	act := c.Request.FormValue("action")
 	data := c.Request.FormValue("data")
 	initUsers := c.Request.FormValue("initUsers")
-	objs, err := a.ConfigService.Save(obj, act, json.RawMessage(data), initUsers, loginUser, hostname)
+	apply := true
+	if value := c.Request.FormValue("apply"); value != "" {
+		apply, _ = strconv.ParseBool(value)
+	}
+	objs, err := a.ConfigService.SaveWithApply(obj, act, json.RawMessage(data), initUsers, loginUser, hostname, apply)
 	if err != nil {
 		jsonMsg(c, "save", err)
 		return
@@ -327,6 +331,16 @@ func (a *ApiService) Save(c *gin.Context, loginUser string) {
 	if err != nil {
 		jsonMsg(c, obj, err)
 	}
+}
+
+func (a *ApiService) ExportWireGuard(c *gin.Context) {
+	peerIndex, err := strconv.Atoi(c.Request.FormValue("peerIndex"))
+	if err != nil {
+		jsonObj(c, nil, common.NewError("peerIndex must be a number"))
+		return
+	}
+	result, err := a.EndpointService.ExportWireGuardPeer(c.Request.FormValue("tag"), peerIndex)
+	jsonObj(c, result, err)
 }
 
 func (a *ApiService) RestartApp(c *gin.Context) {

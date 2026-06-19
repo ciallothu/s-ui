@@ -156,11 +156,13 @@ class AppState extends ChangeNotifier {
     String action,
     dynamic data, {
     List<int> initUsers = const [],
+    bool apply = true,
   }) async {
     final value = await api!.post('resources/$resource', data: {
       'action': action,
       'data': data,
       if (initUsers.isNotEmpty) 'initUsers': initUsers,
+      'apply': apply,
     });
     await refreshBootstrap(notify: false);
     notifyListeners();

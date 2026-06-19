@@ -153,8 +153,6 @@ func NewBox(options Options) (*Box, error) {
 	if err != nil {
 		return nil, common.NewError("create log factory", err)
 	}
-	factory = logFactory
-
 	var internalServices []adapter.LifecycleService
 	certificateOptions := sbCommon.PtrValueOrDefault(options.Certificate)
 	if C.IsAndroid || certificateOptions.Store != "" && certificateOptions.Store != C.CertificateStoreSystem ||

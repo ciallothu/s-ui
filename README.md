@@ -1,23 +1,28 @@
 # S-UI
 **An Advanced Web Panel • Built on SagerNet/Sing-Box**
 
-This repository is an extended fork of [alireza0/s-ui](https://github.com/alireza0/s-ui). It keeps the upstream sing-box management model while adding a stable API, native mobile clients, stronger authentication, unified Web/App navigation, and richer traffic/log analysis.
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-> Mobile source is available in [`mobile/`](mobile/README.md). Android arm64 and unsigned iPhone arm64 artifacts are built remotely by GitHub Actions; no local mobile build is required. The app uses the versioned `/apiv3` API and supports arbitrary request headers, with Cloudflare Access Service Token headers prefilled.
+## Highlights in this fork
 
-## What this fork adds
+This repository extends [alireza0/s-ui](https://github.com/alireza0/s-ui) while retaining its sing-box management model. The additions maintained in this fork are listed first so the differences from upstream are immediately visible.
 
 - Android arm64 and iPhone arm64 management apps with visual and raw JSON editors.
 - Versioned `/apiv3` API covering resources, users, usage/statistics, logs, audit history, backup, tools, and service actions.
 - Cloudflare Zero Trust friendly custom headers in the app connection profile.
-- User/date/search filters for usage, statistics, logs, and audit records.
-- Structured DEBUG, INFO, WARNING, and ERROR logs in both Web and App.
+- User/date/search filters for usage, statistics, logs, audit records, and parsed connection details by user, inbound, outbound, endpoint, and destination.
+- Searchable multi-level system logs and administrator change history in both Web and App.
 - Granular subscription user-info controls for upload, download, quota, expiry, and node-name remaining quota.
 - OIDC single sign-on, TOTP two-factor authentication with one-time recovery codes, and WebAuthn passkeys.
 - bcrypt password storage with automatic migration from legacy plaintext records after successful login.
 - Web/App navigation parity: users, resources, TLS, core configuration, analytics, logs, administration, settings, and tools.
 - Visual editors backed by optional raw JSON editing, including fields introduced by newer sing-box versions.
 - Historical traffic views that remain stable until refreshed, plus an explicit real-time mode.
+- Reworked WireGuard Endpoint management with separate server peer ownership and client routing fields, safe split-tunnel defaults, IPv4/IPv6 validation, explicit exported Endpoint host/port, controlled client configuration export, managed peer-to-peer routing, and save/apply rollback.
+- Localized Web and App interfaces in English, Farsi, Vietnamese, Simplified Chinese, Traditional Chinese, Russian, Japanese, French, and Latin.
+- Tag-aware release filenames and seven intended GitHub Actions entries: five upstream workflows plus mobile CI and mobile application builds.
+
+> Mobile source is available in [`mobile/`](mobile/README.md). Android arm64 and unsigned iPhone arm64 artifacts are built remotely by GitHub Actions. The app uses `/apiv3`, supports arbitrary request headers, and pre-fills Cloudflare Access Service Token headers.
 
 ## Milestones
 
@@ -26,6 +31,7 @@ This repository is an extended fork of [alireza0/s-ui](https://github.com/alirez
 - [x] Visual editors and raw JSON fallback across Web and App.
 - [x] Filterable analytics, structured logs, and dotted traffic charts.
 - [x] OIDC, TOTP/2FA, recovery codes, and passkey management.
+- [x] Safe WireGuard Endpoint editing, client export, managed peer routing, validation, and transactional apply.
 - [x] Seven-workflow GitHub Actions layout: five upstream workflows plus mobile CI and mobile release builds.
 
 ## Release artifact naming
@@ -104,6 +110,20 @@ TOTP is managed from **Admins → Login security**. Enabling it shows an authent
 Enable passkeys in **Settings → Login & identity**, then add passkeys from **Admins → Login security**. RP ID and allowed origins can normally be left blank: S-UI auto-detects the current management domain from the browser origin and reverse-proxy headers such as `Forwarded`, `X-Forwarded-Host`, and `X-Forwarded-Proto`.
 
 Manual configuration is still available for unusual proxy layouts. RP ID should be only the domain, for example `panel.example.com`; allowed origins should include full scheme origins, for example `https://panel.example.com`. Passkeys require HTTPS except for localhost-style development origins. The Web UI gives a best-effort automatic name such as iCloud Keychain, Google Password Manager, Windows Hello, or Security key; names can be renamed afterwards.
+
+## WireGuard Endpoint configuration
+
+The WireGuard editor follows the field semantics of the embedded sing-box `v1.13.12` Endpoint implementation:
+
+- **Server Endpoint addresses** identify the S-UI side itself and should normally be an IPv4 `/32` and/or IPv6 `/128`, such as `10.66.66.1/32` and `fd66:66:66::1/128`.
+- **Virtual network prefixes** are allocation ranges, such as `10.66.66.0/24` and `fd66:66:66::/64`. They are not written into the Endpoint `address` field.
+- **Server peer allowed IPs** assign source addresses to one peer and therefore use unique host routes such as `/32` and `/128`.
+- **Client AllowedIPs** choose destination traffic sent through the client tunnel. New peers default to the WireGuard virtual networks; `0.0.0.0/0` and `::/0` are only emitted after explicitly selecting the full-tunnel preset.
+- **Client Endpoint host/port** must identify the real public WireGuard UDP entrypoint. It is deliberately independent from the Web panel hostname, which may be behind Cloudflare Access or an HTTP reverse proxy.
+- **Roaming clients** have no sing-box runtime peer address/port. Static and site-to-site peers can specify a remote address, port, and runtime keepalive.
+- **Peer-to-peer routing** is stored in a dedicated managed-route table and injected when the runtime configuration is generated. Equivalent user rules are not duplicated, and disabling the feature never deletes a user-authored rule.
+
+Use **Save** to keep a validated change without altering the current runtime. **Save & apply** validates the complete generated configuration, restarts the embedded core synchronously, checks the running state, and restores the previous runtime if application fails. Existing Endpoint JSON remains readable; the database migration adds only the managed-route table, while WireGuard editor metadata is stored compatibly in the existing Endpoint options.
 
 ## Default Installation Information
 - Panel Port: 2095
