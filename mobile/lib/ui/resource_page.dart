@@ -199,13 +199,18 @@ class _ResourcePageState extends State<ResourcePage> {
       showMessage(context, context.tr('resource.noWireguardPeers'), error: true);
       return;
     }
+    final api = context.read<AppState>().api!;
+    final fallbackNames = [
+      for (var index = 0; index < peers.length; index++) context.tr('resource.wireguardPeer', args: {'index': index + 1}),
+    ];
     final values = <_QrValue>[];
     for (var index = 0; index < peers.length; index++) {
       final result = Map<String, dynamic>.from(
-        await context.read<AppState>().api!.post('wireguard/export', data: {'tag': item['tag'], 'peerIndex': index}) as Map,
+        await api.post('wireguard/export', data: {'tag': item['tag'], 'peerIndex': index}) as Map,
       );
-      values.add(_QrValue(result['name']?.toString() ?? context.tr('resource.wireguardPeer', args: {'index': index + 1}), result['config']?.toString() ?? ''));
+      values.add(_QrValue(result['name']?.toString() ?? fallbackNames[index], result['config']?.toString() ?? ''));
     }
+    if (!mounted) return;
     await _showQrValues('${item['tag']} · WireGuard', values);
   }
 

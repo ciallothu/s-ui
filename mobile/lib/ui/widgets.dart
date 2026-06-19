@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -92,7 +93,7 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
   }
 
   Widget _buildOverlay(BuildContext overlayContext) {
-    final rtl = Directionality.of(context) == TextDirection.rtl;
+    final rtl = Directionality.of(context) == ui.TextDirection.rtl;
     final colors = Theme.of(context).colorScheme;
     return Stack(
       children: [

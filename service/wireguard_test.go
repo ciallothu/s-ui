@@ -24,13 +24,13 @@ func testWireGuardData(t *testing.T) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"id": 0, "type": "wireguard", "tag": "wireguard-test", "wireguard_schema": 2,
-		"address": []string{"10.66.66.1/32", "fd66:66:66::1/128"},
+		"address":          []string{"10.66.66.1/32", "fd66:66:66::1/128"},
 		"tunnel_ipv4_cidr": "10.66.66.0/24", "tunnel_ipv6_cidr": "fd66:66:66::/64",
 		"private_key": serverKey.String(), "listen_port": 20522,
 		"advertised_endpoint_host": "vpn.example.com", "advertised_endpoint_port": 20522,
-		"peer_to_peer_enabled": true,
+		"peer_to_peer_enabled":       true,
 		"default_client_allowed_ips": []string{"10.66.66.0/24", "fd66:66:66::/64"},
-		"default_client_dns": []string{"10.66.66.1"}, "default_client_mtu": 1420, "default_client_keepalive": 25,
+		"default_client_dns":         []string{"10.66.66.1"}, "default_client_mtu": 1420, "default_client_keepalive": 25,
 		"peers": []interface{}{map[string]interface{}{
 			"name": "Laptop", "peer_mode": "roaming_client", "public_key": clientKey.PublicKey().String(),
 			"client_private_key": clientKey.String(), "assigned_ipv4": "10.66.66.2/32", "assigned_ipv6": "fd66:66:66::2/128",
