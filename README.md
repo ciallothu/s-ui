@@ -8,7 +8,7 @@
 This repository extends [alireza0/s-ui](https://github.com/alireza0/s-ui) while retaining its sing-box management model. The additions maintained in this fork are listed first so the differences from upstream are immediately visible.
 
 - Android arm64 and iPhone arm64 management apps with visual and raw JSON editors.
-- Versioned `/apiv3` API covering resources, users, usage/statistics, logs, audit history, backup, tools, and service actions.
+- Versioned `/apiv3` API covering resources, users, usage/statistics, logs, audit history, backup, and everyday tools.
 - Cloudflare Zero Trust friendly custom headers in the app connection profile.
 - User/date/search filters for usage, statistics, logs, audit records, and parsed connection details by user, inbound, outbound, endpoint, and destination.
 - Searchable multi-level system logs and administrator change history in both Web and App.

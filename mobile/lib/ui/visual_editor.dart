@@ -419,16 +419,21 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
   }
 
   Future<void> _generateWireGuardKeyPair(Map<dynamic, dynamic> parent, String key, String path, String current) async {
-    if ((current.isNotEmpty || boolValue(parent['client_private_key_set']) || boolValue(parent['private_key_set'])) &&
-        !(await confirm(context, title: context.t('editor.regenerateKeyPair'), message: context.t('editor.regenerateSecretMessage')))) {
-      return;
+    final api = context.read<AppState>().api!;
+    final regenerateTitle = context.t('editor.regenerateKeyPair');
+    final regenerateMessage = context.t('editor.regenerateSecretMessage');
+    final invalidMessage = context.t('editor.keypairInvalid');
+    if (current.isNotEmpty || boolValue(parent['client_private_key_set']) || boolValue(parent['private_key_set'])) {
+      final accepted = await confirm(context, title: regenerateTitle, message: regenerateMessage);
+      if (!accepted || !mounted) return;
     }
     try {
-      final result = await context.read<AppState>().api!.post('tools/keypair', data: {'type': 'wireguard', 'options': ''});
+      final result = await api.post('tools/keypair', data: {'type': 'wireguard', 'options': ''});
+      if (!mounted) return;
       final values = result is List ? result.map((item) => item.toString()).toList() : <String>[];
       final privateKey = _lineValue(values, 'PrivateKey:');
       final publicKey = _lineValue(values, 'PublicKey:');
-      if (privateKey.isEmpty || publicKey.isEmpty) throw FormatException(context.t('editor.keypairInvalid'));
+      if (privateKey.isEmpty || publicKey.isEmpty) throw FormatException(invalidMessage);
       setState(() {
         if (key == 'private_key' || path == 'ext.public_key') {
           final root = value is Map<String, dynamic> ? value as Map<String, dynamic> : parent;
@@ -449,15 +454,20 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
   }
 
   Future<void> _generateWireGuardPsk(Map<dynamic, dynamic> parent, String current) async {
-    if ((current.isNotEmpty || boolValue(parent['pre_shared_key_set'])) &&
-        !(await confirm(context, title: context.t('editor.regeneratePsk'), message: context.t('editor.regenerateSecretMessage')))) {
-      return;
+    final api = context.read<AppState>().api!;
+    final regenerateTitle = context.t('editor.regeneratePsk');
+    final regenerateMessage = context.t('editor.regenerateSecretMessage');
+    final invalidMessage = context.t('editor.pskInvalid');
+    if (current.isNotEmpty || boolValue(parent['pre_shared_key_set'])) {
+      final accepted = await confirm(context, title: regenerateTitle, message: regenerateMessage);
+      if (!accepted || !mounted) return;
     }
     try {
-      final result = await context.read<AppState>().api!.post('tools/keypair', data: {'type': 'wireguard-psk', 'options': ''});
+      final result = await api.post('tools/keypair', data: {'type': 'wireguard-psk', 'options': ''});
+      if (!mounted) return;
       final values = result is List ? result.map((item) => item.toString()).toList() : <String>[];
       final psk = _lineValue(values, 'PresharedKey:');
-      if (psk.isEmpty) throw FormatException(context.t('editor.pskInvalid'));
+      if (psk.isEmpty) throw FormatException(invalidMessage);
       setState(() {
         parent['pre_shared_key'] = psk;
         parent['pre_shared_key_set'] = true;

@@ -9,7 +9,7 @@
 本仓库基于 [alireza0/s-ui](https://github.com/alireza0/s-ui) 扩展，并保留原有 sing-box 管理模型。以下内容由本分支持续维护：
 
 - Android arm64 与 iPhone arm64 管理 App，同时提供可视化编辑和原始 JSON 编辑。
-- 稳定的 `/apiv3` API，覆盖资源、用户、用量与统计、连接详情、日志、审计、备份、工具和服务操作。
+- 稳定的 `/apiv3` API，覆盖资源、用户、用量与统计、连接详情、日志、审计、备份和常用工具。
 - App 支持任意自定义请求 Header，并预置 Cloudflare Access Service Token 字段。
 - 用量、统计、日志和审计支持用户、日期、关键词筛选；连接统计可按用户、入站、出站、Endpoint 和目标地址查看详情。
 - Web 与 App 均提供可检索的多级别系统日志和管理员变更记录。

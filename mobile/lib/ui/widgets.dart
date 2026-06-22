@@ -83,8 +83,8 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
     final targetBottom = target.localToGlobal(Offset(0, target.size.height)).dy;
     final availableBelow = media.size.height - media.padding.bottom - targetBottom - 8;
     _menuWidth = target.size.width;
-    _menuLeft = topLeft.dx.clamp(8.0, math.max(8.0, overlay.size.width - _menuWidth - 8.0)).toDouble();
-    _menuTop = bottomRight.dy - 1;
+    _menuLeft = topLeft.dx.toDouble();
+    _menuTop = bottomRight.dy - 2;
     _menuHeight = math.min(
       math.min(widget.options.length, _selectMenuMaxRows) * _selectMenuRowHeight,
       math.max(_selectMenuRowHeight, availableBelow),
@@ -123,7 +123,10 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
               color: colors.surfaceContainerHigh,
               elevation: 8,
               shadowColor: colors.shadow,
-              shape: const RoundedRectangleBorder(borderRadius: _selectMenuRadius),
+              shape: RoundedRectangleBorder(
+                borderRadius: _selectMenuRadius,
+                side: BorderSide(color: colors.outlineVariant),
+              ),
               clipBehavior: Clip.antiAlias,
               child: MediaQuery.removePadding(
                 context: overlayContext,
