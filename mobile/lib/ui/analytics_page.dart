@@ -21,11 +21,14 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   DateTime start = DateTime.now().subtract(const Duration(days: 7));
   DateTime end = DateTime.now();
   String resource = 'user';
+  String level = 'ALL';
   bool loading = false;
   List<dynamic> usageItems = [];
   List<dynamic> statItems = [];
+  List<dynamic> logItems = [];
   Map<String, dynamic> connectionData = {};
   int usageTotal = 0;
+  int logTotal = 0;
   int upload = 0;
   int download = 0;
   String? error;
@@ -33,7 +36,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    tabs = TabController(length: 3, vsync: this)..addListener(() {
+    tabs = TabController(length: 4, vsync: this)..addListener(() {
         if (!tabs.indexIsChanging) load();
       });
     load();
@@ -57,7 +60,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         'start': unixStartOfDay(start),
         'end': unixEndOfDay(end),
         'search': search.text.trim(),
-        'limit': tabs.index == 0 ? 500 : tabs.index == 1 ? 2000 : 500,
+        'limit': tabs.index == 0 ? 500 : tabs.index == 1 ? 2000 : 1000,
       };
       final api = context.read<AppState>().api!;
       if (tabs.index == 0) {
@@ -69,6 +72,16 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
             usageTotal = int.tryParse(result['total']?.toString() ?? '') ?? 0;
             upload = int.tryParse(result['upload']?.toString() ?? '') ?? 0;
             download = int.tryParse(result['download']?.toString() ?? '') ?? 0;
+          });
+        }
+      } else if (tabs.index == 3) {
+        query['level'] = level;
+        query['user'] = user.text.trim();
+        final result = Map<String, dynamic>.from(await api.get('logs', query: query) as Map);
+        if (mounted) {
+          setState(() {
+            logItems = List<dynamic>.from(result['items'] as List? ?? const []);
+            logTotal = int.tryParse(result['total']?.toString() ?? '') ?? 0;
           });
         }
       } else {
@@ -115,7 +128,15 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
     return Column(
       children: [
         PageHeader(title: context.t('analytics.title'), subtitle: context.t('analytics.subtitle')),
-        TabBar(controller: tabs, tabs: [Tab(text: context.t('analytics.userUsage')), Tab(text: context.t('analytics.trafficTrends')), Tab(text: context.t('analytics.connections'))]),
+        TabBar(
+          controller: tabs,
+          tabs: [
+            Tab(text: context.t('analytics.userUsage')),
+            Tab(text: context.t('analytics.trafficTrends')),
+            Tab(text: context.t('analytics.connections')),
+            Tab(text: context.t('logs.title')),
+          ],
+        ),
         FilterCard(
           child: Column(
             children: [
@@ -130,7 +151,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               Row(
                 children: [
                   Expanded(child: TextField(controller: user, onSubmitted: (_) => load(), decoration: InputDecoration(labelText: context.t('analytics.userExact'), prefixIcon: const Icon(Icons.person_search_outlined)))),
-                  if (tabs.index != 0) ...[
+                  if (tabs.index != 0 && tabs.index != 3) ...[
                     const SizedBox(width: 8),
                     Expanded(
                       child: AnchoredSelect<String>(
@@ -146,6 +167,21 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
                         ],
                         onChanged: (value) {
                           setState(() => resource = value);
+                          load();
+                        },
+                      ),
+                    ),
+                  ] else if (tabs.index == 3) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: AnchoredSelect<String>(
+                        value: level,
+                        label: context.t('logs.level'),
+                        options: [
+                          for (final value in const ['ALL', 'DEBUG', 'INFO', 'WARNING', 'ERROR']) SelectOption(value, value),
+                        ],
+                        onChanged: (value) {
+                          setState(() => level = value);
                           load();
                         },
                       ),
@@ -168,7 +204,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         Expanded(
           child: error != null
               ? EmptyState(label: error!, icon: Icons.error_outline)
-              : TabBarView(controller: tabs, children: [_usage(), _stats(), _connections()]),
+              : TabBarView(controller: tabs, children: [_usage(), _stats(), _connections(), _logs()]),
         ),
       ],
     );
@@ -286,7 +322,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
           if (items.isEmpty)
             EmptyState(label: context.t('analytics.noConnections'))
           else
-            for (final raw in items.take(100)) _connectionTile(Map<String, dynamic>.from(raw as Map)),
+            for (final raw in items.take(100)) _connectionTile(Map<String, dynamic>.from(raw as Map), openRaw: true),
         ],
       ),
     );
@@ -314,14 +350,45 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         ),
       );
 
-  Widget _connectionTile(Map<String, dynamic> item) => ListTile(
+  Widget _connectionTile(Map<String, dynamic> item, {bool openRaw = false}) => ListTile(
         dense: true,
         leading: Icon(item['resource'] == 'outbound' ? Icons.call_made : Icons.call_received),
         title: Text('${item['resource']}/${item['protocol']}[${item['tag']}]'),
-        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['user']?.toString().isNotEmpty == true ? item['user'] : item['remote'] ?? '—'}'),
+        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['user']?.toString().isNotEmpty == true ? item['user'] : context.t('common.all')} · ${_connectionTarget(item)}'),
         trailing: const Icon(Icons.chevron_right),
-        onTap: () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
+        onTap: openRaw ? () => _showConnectionLog(item) : () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
       );
+
+  Widget _logs() {
+    if (logItems.isEmpty) return EmptyState(label: context.t('logs.empty'));
+    return RefreshIndicator(
+      onRefresh: load,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+        itemCount: logItems.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) return Padding(padding: const EdgeInsets.fromLTRB(4, 0, 4, 8), child: Text(context.t('logs.count', args: {'count': logTotal})));
+          return _logCard(Map<String, dynamic>.from(logItems[index - 1] as Map));
+        },
+      ),
+    );
+  }
+
+  Widget _logCard(Map<String, dynamic> item) {
+    final logLevel = item['level']?.toString() ?? 'INFO';
+    final color = _levelColor(logLevel);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        leading: CircleAvatar(radius: 18, backgroundColor: color.withValues(alpha: .15), child: Icon(Icons.receipt_long_outlined, size: 18, color: color)),
+        title: Text(item['message']?.toString() ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
+        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['source'] ?? 'system'}${item['user']?.toString().isNotEmpty == true ? ' · ${item['user']}' : ''}'),
+        trailing: Chip(label: Text(logLevel), side: BorderSide.none),
+        children: [Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: Align(alignment: Alignment.centerLeft, child: SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace'))))],
+      ),
+    );
+  }
 
   Future<void> _showConnectionDetails(String resource, String tag) async {
     if (tag.isEmpty) return;
@@ -352,7 +419,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               if (items.isEmpty)
                 EmptyState(label: sheetContext.t('analytics.noConnections'))
               else
-                for (final raw in items) _connectionTile(Map<String, dynamic>.from(raw as Map)),
+                for (final raw in items) _connectionTile(Map<String, dynamic>.from(raw as Map), openRaw: true),
             ],
           ),
         ),
@@ -361,6 +428,53 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
       if (mounted) showMessage(context, exception.toString(), error: true);
     }
   }
+
+  Future<void> _showConnectionLog(Map<String, dynamic> item) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + MediaQuery.viewInsetsOf(sheetContext).bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(sheetContext.t('analytics.connectionLog'), style: Theme.of(sheetContext).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              _detailLine(sheetContext, sheetContext.t('logs.level'), item['level']?.toString()),
+              _detailLine(sheetContext, sheetContext.t('logs.time'), item['time']?.toString() ?? formatTimestamp(item['timestamp'])),
+              _detailLine(sheetContext, sheetContext.t('analytics.resource'), '${item['resource']}/${item['protocol']}[${item['tag']}]'),
+              _detailLine(sheetContext, sheetContext.t('analytics.user'), item['user']?.toString()),
+              _detailLine(sheetContext, sheetContext.t('analytics.destination'), item['destination']?.toString()),
+              _detailLine(sheetContext, sheetContext.t('analytics.source'), item['source']?.toString()),
+              _detailLine(sheetContext, sheetContext.t('analytics.remote'), item['remote']?.toString()),
+              const Divider(height: 24),
+              Text(sheetContext.t('analytics.rawMessage'), style: Theme.of(sheetContext).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * .35),
+                child: SingleChildScrollView(
+                  child: SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace')),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detailLine(BuildContext context, String label, String? value) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 96, child: Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+            Expanded(child: SelectableText(value?.isNotEmpty == true ? value! : '—')),
+          ],
+        ),
+      );
 }
 
 class _SummaryCard extends StatelessWidget {
@@ -430,3 +544,11 @@ class _TrafficPainter extends CustomPainter {
 
 int _int(dynamic value) => int.tryParse(value?.toString() ?? '') ?? 0;
 String _date(DateTime value) => '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+String _connectionTarget(Map<String, dynamic> item) =>
+    item['destination']?.toString().isNotEmpty == true ? item['destination'].toString() : item['source']?.toString().isNotEmpty == true ? item['source'].toString() : item['remote']?.toString().isNotEmpty == true ? item['remote'].toString() : '—';
+Color _levelColor(String level) => switch (level) {
+      'ERROR' => Colors.red,
+      'WARNING' => Colors.orange,
+      'DEBUG' => Colors.grey,
+      _ => Colors.blue,
+    };

@@ -17,7 +17,8 @@ import (
 	"gorm.io/gorm"
 )
 
-const wireGuardSchemaVersion = 2
+const wireGuardSchemaVersion = 3
+const wireGuardRedactedSecret = "[redacted]"
 
 type WireGuardExport struct {
 	Name     string `json:"name"`
@@ -93,6 +94,23 @@ func interfaceStrings(values []string) []interface{} {
 	return result
 }
 
+func jsonStringList(values []string) string {
+	raw, _ := json.Marshal(values)
+	return string(raw)
+}
+
+func isRedactedSecret(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == wireGuardRedactedSecret || strings.Contains(trimmed, "•")
+}
+
+func setRedactedSecret(container map[string]interface{}, key, setKey string) {
+	if stringValue(container[key]) != "" {
+		container[setKey] = true
+		container[key] = wireGuardRedactedSecret
+	}
+}
+
 func parsePrefix(value, field string) (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(value))
 	if err != nil {
@@ -122,6 +140,67 @@ func validateTunnel(value string, ipv6 bool) (netip.Prefix, error) {
 	return prefix, nil
 }
 
+func normalizePeerRole(peer map[string]interface{}) (string, string) {
+	role := stringValue(peer["peer_role"])
+	mode := stringValue(peer["peer_mode"])
+	if role == "" {
+		switch mode {
+		case "static_peer":
+			role = "fixed_node"
+		case "site_to_site":
+			if len(stringsValue(peer["remote_site_cidrs"])) > 0 || len(stringsValue(peer["local_site_cidrs"])) > 0 {
+				role = "site_gateway"
+			} else {
+				role = "fixed_node"
+			}
+		default:
+			role = "client"
+		}
+	}
+	switch role {
+	case "roaming_client":
+		role = "client"
+	case "static_peer":
+		role = "fixed_node"
+	case "site_to_site":
+		role = "site_gateway"
+	}
+	remoteMode := stringValue(peer["remote_endpoint_mode"])
+	if remoteMode == "" {
+		if role == "client" {
+			remoteMode = "dynamic"
+		} else if stringValue(peer["static_remote_address"]) != "" || intValue(peer["static_remote_port"]) > 0 {
+			remoteMode = "static"
+		} else if role == "site_gateway" {
+			remoteMode = "dynamic"
+		} else {
+			remoteMode = "static"
+		}
+	}
+	peer["peer_role"] = role
+	peer["remote_endpoint_mode"] = remoteMode
+	peer["peer_mode"] = map[string]string{
+		"client":       "roaming_client",
+		"fixed_node":   "static_peer",
+		"site_gateway": "site_to_site",
+	}[role]
+	return role, remoteMode
+}
+
+func validateSiteCIDR(value string, field string) (netip.Prefix, error) {
+	prefix, err := parsePrefix(value, field)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	if prefix != prefix.Masked() {
+		return netip.Prefix{}, common.NewErrorf("%s must be a canonical network prefix: %s", field, value)
+	}
+	if prefix.Bits() == 0 {
+		return netip.Prefix{}, common.NewErrorf("%s must not be a default route: %s", field, value)
+	}
+	return prefix, nil
+}
+
 func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error) {
 	var root map[string]interface{}
 	if err := json.Unmarshal(data, &root); err != nil {
@@ -130,7 +209,7 @@ func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error
 	if stringValue(root["type"]) != "wireguard" {
 		return data, nil
 	}
-	strict := intValue(root["wireguard_schema"]) >= wireGuardSchemaVersion
+	strict := intValue(root["wireguard_schema"]) >= 2
 	if !strict {
 		return data, nil
 	}
@@ -192,28 +271,38 @@ func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error
 	if intValue(root["advertised_endpoint_port"]) < 1 || intValue(root["advertised_endpoint_port"]) > 65535 {
 		return nil, common.NewError("client endpoint port must be between 1 and 65535")
 	}
+	if _, exists := root["hub_peer_forwarding_enabled"]; !exists {
+		root["hub_peer_forwarding_enabled"] = boolValue(root["peer_to_peer_enabled"], false)
+	}
+	root["peer_to_peer_enabled"] = boolValue(root["hub_peer_forwarding_enabled"], boolValue(root["peer_to_peer_enabled"], false))
 
 	peers := listValue(root["peers"])
 	seenPrefixes := make([]netip.Prefix, 0, len(peers)*2)
+	seenRemoteSites := make([]netip.Prefix, 0, len(peers))
 	for index, rawPeer := range peers {
 		peer := mapValue(rawPeer)
 		if peer == nil {
 			return nil, common.NewErrorf("WireGuard peer %d must be an object", index+1)
 		}
-		mode := stringValue(peer["peer_mode"])
-		if mode == "" {
-			mode = "roaming_client"
-			peer["peer_mode"] = mode
+		role, remoteMode := normalizePeerRole(peer)
+		if role != "client" && role != "fixed_node" && role != "site_gateway" {
+			return nil, common.NewErrorf("WireGuard peer %d has an unsupported role", index+1)
 		}
-		if mode != "roaming_client" && mode != "static_peer" && mode != "site_to_site" {
-			return nil, common.NewErrorf("WireGuard peer %d has an unsupported mode", index+1)
+		if remoteMode != "dynamic" && remoteMode != "static" {
+			return nil, common.NewErrorf("WireGuard peer %d has an unsupported remote endpoint mode", index+1)
 		}
-		if mode == "roaming_client" {
+		if role == "client" {
 			delete(peer, "address")
 			delete(peer, "port")
 			delete(peer, "static_remote_address")
 			delete(peer, "static_remote_port")
-		} else if stringValue(peer["static_remote_address"]) == "" || intValue(peer["static_remote_port"]) < 1 {
+			peer["remote_endpoint_mode"] = "dynamic"
+		} else if role == "fixed_node" || remoteMode == "static" {
+			if stringValue(peer["static_remote_address"]) == "" || intValue(peer["static_remote_port"]) < 1 {
+				return nil, common.NewErrorf("WireGuard peer %d requires a static remote address and port", index+1)
+			}
+		}
+		if intValue(peer["static_remote_port"]) > 65535 {
 			return nil, common.NewErrorf("WireGuard peer %d requires a static remote address and port", index+1)
 		}
 		if key := stringValue(peer["public_key"]); key == "" {
@@ -221,25 +310,34 @@ func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error
 		} else if _, keyErr := wgtypes.ParseKey(key); keyErr != nil {
 			return nil, common.NewErrorf("WireGuard peer %d has an invalid public key", index+1)
 		}
-		if key := stringValue(peer["pre_shared_key"]); key != "" {
+		if key := stringValue(peer["pre_shared_key"]); key != "" && !isRedactedSecret(key) {
 			if _, keyErr := wgtypes.ParseKey(key); keyErr != nil {
 				return nil, common.NewErrorf("WireGuard peer %d has an invalid pre-shared key", index+1)
 			}
 		}
 
-		serverAllowed := stringsValue(peer["server_allowed_ips"])
-		if len(serverAllowed) == 0 {
-			for _, candidate := range []string{stringValue(peer["assigned_ipv4"]), stringValue(peer["assigned_ipv6"])} {
-				if candidate != "" {
-					serverAllowed = append(serverAllowed, candidate)
+		serverAllowed := make([]string, 0, 4)
+		assignedCandidates := []string{stringValue(peer["assigned_ipv4"]), stringValue(peer["assigned_ipv6"])}
+		if assignedCandidates[0] == "" && assignedCandidates[1] == "" {
+			for _, candidate := range append(stringsValue(peer["server_allowed_ips"]), stringsValue(peer["allowed_ips"])...) {
+				prefix, prefixErr := netip.ParsePrefix(candidate)
+				if prefixErr == nil && prefix.Bits() == prefix.Addr().BitLen() {
+					if prefix.Addr().Is4() && assignedCandidates[0] == "" {
+						assignedCandidates[0] = prefix.String()
+					}
+					if prefix.Addr().Is6() && assignedCandidates[1] == "" {
+						assignedCandidates[1] = prefix.String()
+					}
 				}
 			}
 		}
-		if len(serverAllowed) == 0 {
-			serverAllowed = stringsValue(peer["allowed_ips"])
+		for _, candidate := range assignedCandidates {
+			if candidate != "" {
+				serverAllowed = append(serverAllowed, candidate)
+			}
 		}
 		if len(serverAllowed) == 0 {
-			return nil, common.NewErrorf("WireGuard peer %d requires an assigned /32 or /128 address", index+1)
+			return nil, common.NewErrorf("WireGuard peer %d requires an assigned /32 or /128 tunnel address", index+1)
 		}
 		seenFamily := map[bool]bool{}
 		for _, value := range serverAllowed {
@@ -276,6 +374,56 @@ func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error
 			}
 			seenPrefixes = append(seenPrefixes, prefix)
 		}
+		remoteSites := stringsValue(peer["remote_site_cidrs"])
+		if role == "site_gateway" && len(remoteSites) == 0 {
+			return nil, common.NewErrorf("WireGuard peer %d is a site gateway and requires at least one remote site CIDR", index+1)
+		}
+		if role != "site_gateway" && len(remoteSites) > 0 {
+			return nil, common.NewErrorf("WireGuard peer %d must be a site gateway before it can advertise remote site CIDRs", index+1)
+		}
+		normalizedRemoteSites := make([]string, 0, len(remoteSites))
+		for _, value := range remoteSites {
+			prefix, prefixErr := validateSiteCIDR(value, fmt.Sprintf("WireGuard peer %d remote site CIDR", index+1))
+			if prefixErr != nil {
+				return nil, prefixErr
+			}
+			if (tunnel4.IsValid() && prefix.Overlaps(tunnel4)) || (tunnel6.IsValid() && prefix.Overlaps(tunnel6)) {
+				return nil, common.NewErrorf("WireGuard peer %d remote site CIDR %s overlaps a WireGuard virtual network", index+1, value)
+			}
+			for _, existing := range seenRemoteSites {
+				if existing.Overlaps(prefix) {
+					return nil, common.NewErrorf("WireGuard peer %d remote site CIDR %s overlaps another site gateway", index+1, value)
+				}
+			}
+			seenRemoteSites = append(seenRemoteSites, prefix)
+			normalizedRemoteSites = append(normalizedRemoteSites, prefix.String())
+			serverAllowed = append(serverAllowed, prefix.String())
+		}
+		if len(normalizedRemoteSites) > 0 {
+			peer["remote_site_cidrs"] = interfaceStrings(normalizedRemoteSites)
+		}
+		localSites := stringsValue(peer["local_site_cidrs"])
+		normalizedLocalSites := make([]string, 0, len(localSites))
+		for _, value := range localSites {
+			prefix, prefixErr := validateSiteCIDR(value, fmt.Sprintf("WireGuard peer %d local site CIDR", index+1))
+			if prefixErr != nil {
+				return nil, prefixErr
+			}
+			normalizedLocalSites = append(normalizedLocalSites, prefix.String())
+		}
+		if len(normalizedLocalSites) > 0 {
+			peer["local_site_cidrs"] = interfaceStrings(normalizedLocalSites)
+		}
+		if role == "site_gateway" {
+			routeInbounds := stringsValue(peer["route_inbounds"])
+			if len(routeInbounds) == 0 {
+				routeInbounds = []string{stringValue(root["tag"])}
+			}
+			peer["route_inbounds"] = interfaceStrings(routeInbounds)
+		} else {
+			delete(peer, "route_inbounds")
+			delete(peer, "local_site_cidrs")
+		}
 		peer["server_allowed_ips"] = interfaceStrings(serverAllowed)
 		peer["allowed_ips"] = interfaceStrings(serverAllowed)
 		ownAddresses := make(map[netip.Addr]struct{}, len(serverAllowed))
@@ -308,6 +456,9 @@ func normalizeAndValidateWireGuard(data json.RawMessage) (json.RawMessage, error
 			if include6 && tunnel6.IsValid() {
 				clientAllowed = append(clientAllowed, tunnel6.String())
 			}
+		}
+		if role == "site_gateway" {
+			clientAllowed = append(clientAllowed, normalizedLocalSites...)
 		}
 		filteredAllowed := make([]string, 0, len(clientAllowed))
 		for _, value := range clientAllowed {
@@ -349,6 +500,9 @@ func mergeWireGuardSecrets(data json.RawMessage, oldEndpoint *model.Endpoint) (j
 	if err := json.Unmarshal(oldEndpoint.Options, &oldRoot); err != nil {
 		return nil, err
 	}
+	if key := stringValue(root["private_key"]); (key == "" || isRedactedSecret(key)) && stringValue(oldRoot["private_key"]) != "" {
+		root["private_key"] = stringValue(oldRoot["private_key"])
+	}
 	var oldExt map[string]interface{}
 	_ = json.Unmarshal(oldEndpoint.Ext, &oldExt)
 	legacySecrets := map[string]string{}
@@ -358,34 +512,61 @@ func mergeWireGuardSecrets(data json.RawMessage, oldEndpoint *model.Endpoint) (j
 			legacySecrets[stringValue(key["public_key"])] = stringValue(key["private_key"])
 		}
 	}
+	oldPeers := listValue(oldRoot["peers"])
+	oldPeerByPublic := map[string]map[string]interface{}{}
 	for _, raw := range listValue(oldRoot["peers"]) {
 		peer := mapValue(raw)
 		if peer != nil && stringValue(peer["client_private_key"]) != "" {
 			legacySecrets[stringValue(peer["public_key"])] = stringValue(peer["client_private_key"])
 		}
+		if peer != nil && stringValue(peer["public_key"]) != "" {
+			oldPeerByPublic[stringValue(peer["public_key"])] = peer
+		}
 	}
-	for _, raw := range listValue(root["peers"]) {
+	for index, raw := range listValue(root["peers"]) {
 		peer := mapValue(raw)
-		if peer == nil || stringValue(peer["client_private_key"]) != "" {
+		if peer == nil {
 			continue
 		}
-		if secret := legacySecrets[stringValue(peer["public_key"])]; secret != "" {
-			peer["client_private_key"] = secret
+		oldPeer := oldPeerByPublic[stringValue(peer["public_key"])]
+		if oldPeer == nil && index < len(oldPeers) {
+			oldPeer = mapValue(oldPeers[index])
 		}
+		if key := stringValue(peer["client_private_key"]); key == "" || isRedactedSecret(key) {
+			if secret := legacySecrets[stringValue(peer["public_key"])]; secret != "" {
+				peer["client_private_key"] = secret
+			} else if oldPeer != nil && stringValue(oldPeer["client_private_key"]) != "" {
+				peer["client_private_key"] = stringValue(oldPeer["client_private_key"])
+			}
+		}
+		clearPSK := boolValue(peer["pre_shared_key_clear"], false) ||
+			(stringValue(peer["pre_shared_key"]) == "" && valueExplicitlyFalse(peer["pre_shared_key_set"]))
+		if clearPSK {
+			delete(peer, "pre_shared_key")
+		} else if key := stringValue(peer["pre_shared_key"]); key == "" || isRedactedSecret(key) {
+			if oldPeer != nil && stringValue(oldPeer["pre_shared_key"]) != "" {
+				peer["pre_shared_key"] = stringValue(oldPeer["pre_shared_key"])
+			}
+		}
+		delete(peer, "pre_shared_key_clear")
 	}
 	return json.Marshal(root)
 }
 
+func valueExplicitlyFalse(value interface{}) bool {
+	result, ok := value.(bool)
+	return ok && !result
+}
+
 func redactWireGuardSecrets(endpoint map[string]interface{}) {
+	setRedactedSecret(endpoint, "private_key", "private_key_set")
 	for _, raw := range listValue(endpoint["peers"]) {
 		peer := mapValue(raw)
 		if peer == nil {
 			continue
 		}
-		if stringValue(peer["client_private_key"]) != "" {
-			peer["client_private_key_set"] = true
-		}
-		delete(peer, "client_private_key")
+		setRedactedSecret(peer, "client_private_key", "client_private_key_set")
+		setRedactedSecret(peer, "pre_shared_key", "pre_shared_key_set")
 	}
 	ext := mapValue(endpoint["ext"])
 	for _, raw := range listValue(ext["keys"]) {
@@ -407,16 +588,43 @@ func syncWireGuardManagedRoute(tx *gorm.DB, endpoint *model.Endpoint) error {
 	if err := json.Unmarshal(endpoint.Options, &options); err != nil {
 		return err
 	}
-	key := "wireguard-peer-to-peer:" + endpoint.Tag
-	if !boolValue(options["peer_to_peer_enabled"], false) {
-		return tx.Where("managed_key = ?", key).Delete(&model.ManagedRouteRule{}).Error
+	if err := tx.Where("endpoint_tag = ?", endpoint.Tag).Delete(&model.ManagedRouteRule{}).Error; err != nil {
+		return err
 	}
-	rule := model.ManagedRouteRule{
-		ManagedKey: key, EndpointTag: endpoint.Tag,
-		IPv4CIDR: stringValue(options["tunnel_ipv4_cidr"]),
-		IPv6CIDR: stringValue(options["tunnel_ipv6_cidr"]),
+	if boolValue(options["hub_peer_forwarding_enabled"], boolValue(options["peer_to_peer_enabled"], false)) {
+		key := "wireguard-hub-forwarding:" + endpoint.Tag
+		rule := model.ManagedRouteRule{
+			ManagedKey: key, EndpointTag: endpoint.Tag,
+			IPv4CIDR: stringValue(options["tunnel_ipv4_cidr"]),
+			IPv6CIDR: stringValue(options["tunnel_ipv6_cidr"]),
+		}
+		if err := tx.Where("managed_key = ?", key).Assign(rule).FirstOrCreate(&rule).Error; err != nil {
+			return err
+		}
 	}
-	return tx.Where("managed_key = ?", key).Assign(rule).FirstOrCreate(&rule).Error
+	for index, raw := range listValue(options["peers"]) {
+		peer := mapValue(raw)
+		if peer == nil || stringValue(peer["peer_role"]) != "site_gateway" {
+			continue
+		}
+		cidrs := stringsValue(peer["remote_site_cidrs"])
+		if len(cidrs) == 0 {
+			continue
+		}
+		inbounds := stringsValue(peer["route_inbounds"])
+		if len(inbounds) == 0 {
+			inbounds = []string{endpoint.Tag}
+		}
+		key := fmt.Sprintf("wireguard-site-gateway:%s:%d", endpoint.Tag, index)
+		rule := model.ManagedRouteRule{
+			ManagedKey: key, EndpointTag: endpoint.Tag,
+			CIDRs: jsonStringList(cidrs), InboundTags: jsonStringList(inbounds),
+		}
+		if err := tx.Where("managed_key = ?", key).Assign(rule).FirstOrCreate(&rule).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *EndpointService) ExportWireGuardPeer(tag string, peerIndex int) (*WireGuardExport, error) {
@@ -496,11 +704,19 @@ func (s *EndpointService) ExportWireGuardPeer(tag string, peerIndex int) (*WireG
 			}
 		}
 	}
+	if stringValue(peer["peer_role"]) == "site_gateway" {
+		allowed = append(allowed, stringsValue(peer["local_site_cidrs"])...)
+	}
 	filteredAllowed := make([]string, 0, len(allowed))
+	seenAllowed := map[string]bool{}
 	for _, value := range allowed {
 		prefix, err := netip.ParsePrefix(value)
 		if err == nil && ((prefix.Addr().Is4() && include4) || (prefix.Addr().Is6() && include6)) {
-			filteredAllowed = append(filteredAllowed, prefix.String())
+			normalized := prefix.String()
+			if !seenAllowed[normalized] {
+				filteredAllowed = append(filteredAllowed, normalized)
+				seenAllowed[normalized] = true
+			}
 		}
 	}
 	if len(addresses) == 0 || len(filteredAllowed) == 0 {

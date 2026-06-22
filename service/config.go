@@ -400,18 +400,13 @@ func injectManagedRoutes(db *gorm.DB, raw json.RawMessage) (json.RawMessage, err
 		return nil, err
 	}
 	for _, item := range managed {
-		cidrs := make([]string, 0, 2)
-		if item.IPv4CIDR != "" {
-			cidrs = append(cidrs, item.IPv4CIDR)
-		}
-		if item.IPv6CIDR != "" {
-			cidrs = append(cidrs, item.IPv6CIDR)
-		}
-		if len(cidrs) == 0 || containsManagedRoute(rules, item.EndpointTag, cidrs) {
+		cidrs := managedRouteCIDRs(item)
+		inbounds := managedRouteInbounds(item)
+		if len(cidrs) == 0 || len(inbounds) == 0 || containsManagedRoute(rules, inbounds, item.EndpointTag, cidrs) {
 			continue
 		}
 		rules = append(rules, map[string]interface{}{
-			"inbound": []string{item.EndpointTag}, "ip_cidr": cidrs,
+			"inbound": inbounds, "ip_cidr": cidrs,
 			"action": "route", "outbound": item.EndpointTag,
 		})
 	}
@@ -419,21 +414,52 @@ func injectManagedRoutes(db *gorm.DB, raw json.RawMessage) (json.RawMessage, err
 	return json.Marshal(route)
 }
 
-func containsManagedRoute(rules []interface{}, tag string, cidrs []string) bool {
+func managedRouteCIDRs(item model.ManagedRouteRule) []string {
+	if strings.TrimSpace(item.CIDRs) != "" {
+		var cidrs []string
+		if err := json.Unmarshal([]byte(item.CIDRs), &cidrs); err == nil {
+			return cidrs
+		}
+	}
+	cidrs := make([]string, 0, 2)
+	if item.IPv4CIDR != "" {
+		cidrs = append(cidrs, item.IPv4CIDR)
+	}
+	if item.IPv6CIDR != "" {
+		cidrs = append(cidrs, item.IPv6CIDR)
+	}
+	return cidrs
+}
+
+func managedRouteInbounds(item model.ManagedRouteRule) []string {
+	if strings.TrimSpace(item.InboundTags) != "" {
+		var inbounds []string
+		if err := json.Unmarshal([]byte(item.InboundTags), &inbounds); err == nil && len(inbounds) > 0 {
+			return inbounds
+		}
+	}
+	if item.EndpointTag == "" {
+		return nil
+	}
+	return []string{item.EndpointTag}
+}
+
+func containsManagedRoute(rules []interface{}, inbounds []string, tag string, cidrs []string) bool {
 	wanted := append([]string(nil), cidrs...)
 	sort.Strings(wanted)
+	wantedInbounds := append([]string(nil), inbounds...)
+	sort.Strings(wantedInbounds)
 	for _, rawRule := range rules {
 		rule := mapValue(rawRule)
 		if rule == nil || stringValue(rule["action"]) != "route" || stringValue(rule["outbound"]) != tag {
 			continue
 		}
-		inbounds := stringsValue(rule["inbound"])
-		if len(inbounds) != 1 || inbounds[0] != tag {
-			continue
-		}
+		actualInbounds := stringsValue(rule["inbound"])
+		sort.Strings(actualInbounds)
 		actual := stringsValue(rule["ip_cidr"])
 		sort.Strings(actual)
-		if strings.Join(actual, "\x00") == strings.Join(wanted, "\x00") {
+		if strings.Join(actualInbounds, "\x00") == strings.Join(wantedInbounds, "\x00") &&
+			strings.Join(actual, "\x00") == strings.Join(wanted, "\x00") {
 			return true
 		}
 	}

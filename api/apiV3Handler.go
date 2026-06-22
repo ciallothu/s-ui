@@ -66,6 +66,7 @@ func (a *APIv3Handler) initRouter(g *gin.RouterGroup) {
 	protected.GET("/resources/:resource", a.getResource)
 	protected.POST("/resources/:resource", a.saveResource)
 	protected.POST("/wireguard/export", a.exportWireGuard)
+	protected.POST("/wireguard/generate-psk", a.generateWireGuardPsk)
 
 	protected.GET("/status", a.status)
 	protected.GET("/onlines", a.onlines)
@@ -449,6 +450,15 @@ func (a *APIv3Handler) exportWireGuard(c *gin.Context) {
 		return
 	}
 	v3OK(c, result)
+}
+
+func (a *APIv3Handler) generateWireGuardPsk(c *gin.Context) {
+	key, err := service.GenerateWireGuardPresharedKey()
+	if err != nil {
+		v3Error(c, http.StatusInternalServerError, err)
+		return
+	}
+	v3OK(c, gin.H{"pre_shared_key": key})
 }
 
 func (a *APIv3Handler) status(c *gin.Context) {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"os"
 	"runtime"
@@ -212,6 +213,12 @@ func (s *ServerService) GenKeypair(keyType string, options string) []string {
 		return s.generateRealityKeyPair()
 	case "wireguard":
 		return s.generateWireGuardKey(options)
+	case "wireguard-psk", "wireguard_psk", "wg-psk":
+		key, err := GenerateWireGuardPresharedKey()
+		if err != nil {
+			return []string{"Failed to generate wireguard pre-shared key: ", err.Error()}
+		}
+		return []string{"PresharedKey: " + key}
 	}
 
 	return []string{"Failed to generate keypair"}
@@ -252,6 +259,14 @@ func (s *ServerService) generateWireGuardKey(pk string) []string {
 		return []string{"Failed to generate wireguard keypair: ", err.Error()}
 	}
 	return []string{"PrivateKey: " + wgKeys.String(), "PublicKey: " + wgKeys.PublicKey().String()}
+}
+
+func GenerateWireGuardPresharedKey() (string, error) {
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(key[:]), nil
 }
 
 func (s *ServerService) GetDatabaseInfo() map[string]int64 {

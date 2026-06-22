@@ -7,7 +7,6 @@ import 'admin_page.dart';
 import 'analytics_page.dart';
 import 'config_page.dart';
 import 'dashboard_page.dart';
-import 'logs_page.dart';
 import 'resource_page.dart';
 import 'tools_page.dart';
 import 'widgets.dart';
@@ -39,7 +38,6 @@ class _AppShellState extends State<AppShell> {
     _Destination('nav.tls', Icons.workspace_premium_outlined, (context) => ResourcePage(resource: 'tls', title: context.t('nav.tls'), icon: Icons.workspace_premium_outlined)),
     _Destination('nav.config', Icons.tune, (_) => const ConfigPage()),
     _Destination('nav.analytics', Icons.query_stats, (_) => const AnalyticsPage()),
-    _Destination('nav.logs', Icons.receipt_long_outlined, (_) => const LogsPage()),
     _Destination('nav.admin', Icons.admin_panel_settings_outlined, (_) => const AdminPage()),
     _Destination('nav.tools', Icons.settings_outlined, (_) => const ToolsPage()),
   ];

@@ -18,7 +18,7 @@ This repository extends [alireza0/s-ui](https://github.com/alireza0/s-ui) while 
 - Web/App navigation parity: users, resources, TLS, core configuration, analytics, logs, administration, settings, and tools.
 - Visual editors backed by optional raw JSON editing, including fields introduced by newer sing-box versions.
 - Historical traffic views that remain stable until refreshed, plus an explicit real-time mode.
-- Reworked WireGuard Endpoint management with separate server peer ownership and client routing fields, safe split-tunnel defaults, IPv4/IPv6 validation, explicit exported Endpoint host/port, controlled client configuration export, managed peer-to-peer routing, and save/apply rollback.
+- Reworked WireGuard Endpoint management with separate server peer ownership and client routing fields, secure PSK generation/redaction, safe split-tunnel defaults, IPv4/IPv6 validation, explicit exported Endpoint host/port, controlled client configuration export, managed hub forwarding/site-gateway routes, and save/apply rollback.
 - Localized Web and App interfaces in English, Farsi, Vietnamese, Simplified Chinese, Traditional Chinese, Russian, Japanese, French, and Latin.
 - Tag-aware release filenames and seven intended GitHub Actions entries: five upstream workflows plus mobile CI and mobile application builds.
 
@@ -31,7 +31,7 @@ This repository extends [alireza0/s-ui](https://github.com/alireza0/s-ui) while 
 - [x] Visual editors and raw JSON fallback across Web and App.
 - [x] Filterable analytics, structured logs, and dotted traffic charts.
 - [x] OIDC, TOTP/2FA, recovery codes, and passkey management.
-- [x] Safe WireGuard Endpoint editing, client export, managed peer routing, validation, and transactional apply.
+- [x] Safe WireGuard Endpoint editing, PSK/key handling, client export, managed hub/site routing, validation, and transactional apply.
 - [x] Seven-workflow GitHub Actions layout: five upstream workflows plus mobile CI and mobile release builds.
 
 ## Release artifact naming
@@ -120,8 +120,12 @@ The WireGuard editor follows the field semantics of the embedded sing-box `v1.13
 - **Server peer allowed IPs** assign source addresses to one peer and therefore use unique host routes such as `/32` and `/128`.
 - **Client AllowedIPs** choose destination traffic sent through the client tunnel. New peers default to the WireGuard virtual networks; `0.0.0.0/0` and `::/0` are only emitted after explicitly selecting the full-tunnel preset.
 - **Client Endpoint host/port** must identify the real public WireGuard UDP entrypoint. It is deliberately independent from the Web panel hostname, which may be behind Cloudflare Access or an HTTP reverse proxy.
-- **Roaming clients** have no sing-box runtime peer address/port. Static and site-to-site peers can specify a remote address, port, and runtime keepalive.
-- **Peer-to-peer routing** is stored in a dedicated managed-route table and injected when the runtime configuration is generated. Equivalent user rules are not duplicated, and disabling the feature never deletes a user-authored rule.
+- **Regular clients** have no sing-box runtime peer address/port. WireGuard learns the current endpoint from handshakes, so this is suitable for phones, laptops, and NATed devices.
+- **Fixed remote nodes** use a known remote WireGuard address and UDP port. Their server-side AllowedIPs normally remain the node’s own `/32` and/or `/128`.
+- **Site gateways** represent a remote gateway plus one or more LAN prefixes behind it. The server runtime peer AllowedIPs include the gateway tunnel address plus the remote site CIDRs. The exported client configuration includes the S-UI WireGuard virtual networks and configured local site CIDRs, not the remote site’s own LAN.
+- **PSK and private keys** are generated with backend secure randomness, hidden in ordinary API resource responses, preserved when saving redacted forms, and revealed only through explicit generation/copy/export actions.
+- **Device forwarding through S-UI** is stored in a dedicated managed-route table and injected when the runtime configuration is generated. It means traffic is forwarded by this S-UI server between devices in the same Endpoint; it is not a direct device-to-device tunnel or NAT traversal feature. Equivalent user rules are not duplicated, and disabling the feature never deletes a user-authored rule.
+- **Site-to-site routing** requires a return path on the local or remote LAN. If NAT is not configured separately, add a route such as `192.168.50.0/24 via <WireGuard gateway>` on the relevant network; otherwise only one-way traffic may be visible.
 
 Use **Save** to keep a validated change without altering the current runtime. **Save & apply** validates the complete generated configuration, restarts the embedded core synchronously, checks the running state, and restores the previous runtime if application fails. Existing Endpoint JSON remains readable; the database migration adds only the managed-route table, while WireGuard editor metadata is stored compatibly in the existing Endpoint options.
 

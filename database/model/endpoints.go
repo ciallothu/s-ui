@@ -13,6 +13,8 @@ type ManagedRouteRule struct {
 	EndpointTag string `json:"endpointTag" gorm:"index;not null"`
 	IPv4CIDR    string `json:"ipv4Cidr"`
 	IPv6CIDR    string `json:"ipv6Cidr"`
+	CIDRs       string `json:"cidrs"`
+	InboundTags string `json:"inboundTags"`
 }
 
 type Endpoint struct {
@@ -79,15 +81,19 @@ func (o Endpoint) MarshalJSON() ([]byte, error) {
 var wireGuardEndpointMetadataKeys = []string{
 	"wireguard_schema", "tunnel_ipv4_cidr", "tunnel_ipv6_cidr",
 	"advertised_endpoint_host", "advertised_endpoint_port", "peer_to_peer_enabled",
+	"hub_peer_forwarding_enabled",
 	"default_client_allowed_ips", "default_client_dns", "default_client_mtu",
-	"default_client_keepalive",
+	"default_client_keepalive", "private_key_set",
 }
 
 var wireGuardPeerMetadataKeys = []string{
-	"name", "peer_mode", "client_private_key", "client_private_key_set", "client_public_key",
+	"name", "peer_mode", "peer_role", "remote_endpoint_mode",
+	"client_private_key", "client_private_key_set", "client_public_key",
+	"pre_shared_key_set", "pre_shared_key_clear",
 	"assigned_ipv4", "assigned_ipv6", "server_allowed_ips", "client_allowed_ips",
 	"client_dns", "client_mtu", "client_keepalive", "client_route_preset",
 	"include_ipv4", "include_ipv6", "static_remote_address", "static_remote_port",
+	"remote_site_cidrs", "local_site_cidrs", "route_inbounds",
 }
 
 // wireGuardRuntimeOptions removes S-UI export/editor metadata before the
@@ -107,16 +113,23 @@ func wireGuardRuntimeOptions(options map[string]interface{}) map[string]interfac
 		if serverAllowed, ok := peer["server_allowed_ips"].([]interface{}); ok && len(serverAllowed) > 0 {
 			peer["allowed_ips"] = serverAllowed
 		}
-		if mode == "roaming_client" || mode == "" {
+		role, _ := peer["peer_role"].(string)
+		remoteMode, _ := peer["remote_endpoint_mode"].(string)
+		clientRole := role == "client" || (role == "" && (mode == "roaming_client" || mode == ""))
+		staticEndpoint := remoteMode == "static" || role == "fixed_node" || (role == "" && (mode == "static_peer" || mode == "site_to_site"))
+		if clientRole {
 			delete(peer, "address")
 			delete(peer, "port")
-		} else {
+		} else if staticEndpoint {
 			if address, ok := peer["static_remote_address"].(string); ok && address != "" {
 				peer["address"] = address
 			}
 			if port, ok := peer["static_remote_port"]; ok {
 				peer["port"] = port
 			}
+		} else {
+			delete(peer, "address")
+			delete(peer, "port")
 		}
 		for _, key := range wireGuardPeerMetadataKeys {
 			delete(peer, key)

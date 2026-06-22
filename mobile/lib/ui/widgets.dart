@@ -49,6 +49,8 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
   OverlayEntry? _overlayEntry;
   double _menuWidth = 0;
   double _menuHeight = 0;
+  double _menuLeft = 0;
+  double _menuTop = 0;
 
   bool get _isOpen => _overlayEntry != null;
 
@@ -73,10 +75,16 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
   void _open() {
     final target = _targetKey.currentContext?.findRenderObject() as RenderBox?;
     if (target == null || !target.hasSize || widget.options.isEmpty) return;
+    final overlay = Overlay.of(context, rootOverlay: true).context.findRenderObject() as RenderBox?;
+    if (overlay == null || !overlay.hasSize) return;
     final media = MediaQuery.of(context);
+    final topLeft = overlay.globalToLocal(target.localToGlobal(Offset.zero));
+    final bottomRight = overlay.globalToLocal(target.localToGlobal(Offset(target.size.width, target.size.height)));
     final targetBottom = target.localToGlobal(Offset(0, target.size.height)).dy;
     final availableBelow = media.size.height - media.padding.bottom - targetBottom - 8;
     _menuWidth = target.size.width;
+    _menuLeft = topLeft.dx.clamp(8.0, math.max(8.0, overlay.size.width - _menuWidth - 8.0)).toDouble();
+    _menuTop = bottomRight.dy - 1;
     _menuHeight = math.min(
       math.min(widget.options.length, _selectMenuMaxRows) * _selectMenuRowHeight,
       math.max(_selectMenuRowHeight, availableBelow),
@@ -103,12 +111,10 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
             onTap: _close,
           ),
         ),
-        CompositedTransformFollower(
-          link: _layerLink,
-          showWhenUnlinked: false,
-          targetAnchor: rtl ? Alignment.bottomRight : Alignment.bottomLeft,
-          followerAnchor: rtl ? Alignment.topRight : Alignment.topLeft,
-          offset: const Offset(0, 4),
+        Positioned(
+          left: rtl ? null : _menuLeft,
+          right: rtl ? (MediaQuery.sizeOf(overlayContext).width - _menuLeft - _menuWidth) : null,
+          top: _menuTop,
           child: SizedBox(
             key: const ValueKey('anchored-select-menu'),
             width: _menuWidth,
@@ -119,46 +125,51 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
               shadowColor: colors.shadow,
               shape: const RoundedRectangleBorder(borderRadius: _selectMenuRadius),
               clipBehavior: Clip.antiAlias,
-              child: Scrollbar(
-                controller: _scrollController,
-                thumbVisibility: widget.options.length > _selectMenuMaxRows,
-                interactive: true,
-                thickness: 4,
-                radius: const Radius.circular(8),
-                child: ListView.builder(
+              child: MediaQuery.removePadding(
+                context: overlayContext,
+                removeTop: true,
+                removeBottom: true,
+                child: Scrollbar(
                   controller: _scrollController,
-                  padding: EdgeInsets.zero,
-                  primary: false,
-                  itemExtent: _selectMenuRowHeight,
-                  itemCount: widget.options.length,
-                  itemBuilder: (context, index) {
-                    final option = widget.options[index];
-                    final selected = option.value == widget.value;
-                    return DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: selected ? colors.secondaryContainer.withValues(alpha: .72) : null,
-                        border: index == widget.options.length - 1
-                            ? null
-                            : Border(bottom: BorderSide(color: colors.outlineVariant)),
-                      ),
-                      child: InkWell(
-                        onTap: () {
-                          _close();
-                          widget.onChanged(option.value);
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            children: [
-                              SizedBox(width: 24, child: selected ? const Icon(Icons.check, size: 20) : null),
-                              const SizedBox(width: 8),
-                              Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
-                            ],
+                  thumbVisibility: widget.options.length > _selectMenuMaxRows,
+                  interactive: true,
+                  thickness: 4,
+                  radius: const Radius.circular(8),
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: EdgeInsets.zero,
+                    primary: false,
+                    itemExtent: _selectMenuRowHeight,
+                    itemCount: widget.options.length,
+                    itemBuilder: (context, index) {
+                      final option = widget.options[index];
+                      final selected = option.value == widget.value;
+                      return DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: selected ? colors.secondaryContainer.withValues(alpha: .72) : null,
+                          border: index == widget.options.length - 1
+                              ? null
+                              : Border(bottom: BorderSide(color: colors.outlineVariant)),
+                        ),
+                        child: InkWell(
+                          onTap: () {
+                            _close();
+                            widget.onChanged(option.value);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
+                              children: [
+                                SizedBox(width: 24, child: selected ? const Icon(Icons.check, size: 20) : null),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
             ),
@@ -178,32 +189,50 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
       }
     }
 
-    return CompositedTransformTarget(
-      key: _targetKey,
-      link: _layerLink,
-      child: InkWell(
-          borderRadius: _selectMenuRadius,
-          onTap: _toggle,
-          child: InputDecorator(
-            isEmpty: selected == null,
-            decoration: InputDecoration(
-              labelText: widget.label,
-              helperText: widget.helperText,
-              prefixIcon: widget.prefixIcon,
-              isDense: widget.compact,
-              border: widget.compact ? InputBorder.none : null,
-              contentPadding: widget.compact ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8) : null,
-            ),
-            child: Row(
-              mainAxisSize: widget.compact ? MainAxisSize.min : MainAxisSize.max,
-              children: [
-                Flexible(child: Text(selected?.label ?? '', overflow: TextOverflow.ellipsis)),
-                const SizedBox(width: 4),
-                Icon(_isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down),
-              ],
+    final helper = widget.helperText;
+    final helperStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        CompositedTransformTarget(
+          key: _targetKey,
+          link: _layerLink,
+          child: InkWell(
+            borderRadius: _selectMenuRadius,
+            onTap: _toggle,
+            child: InputDecorator(
+              isEmpty: selected == null,
+              decoration: InputDecoration(
+                labelText: widget.label,
+                prefixIcon: widget.prefixIcon,
+                isDense: widget.compact,
+                border: widget.compact ? InputBorder.none : null,
+                contentPadding: widget.compact ? const EdgeInsets.symmetric(horizontal: 8, vertical: 8) : null,
+              ),
+              child: Row(
+                mainAxisSize: widget.compact ? MainAxisSize.min : MainAxisSize.max,
+                children: [
+                  Flexible(child: Text(selected?.label ?? '', overflow: TextOverflow.ellipsis)),
+                  const SizedBox(width: 4),
+                  Icon(_isOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down),
+                ],
+              ),
             ),
           ),
         ),
+        if (!_isOpen && helper != null && helper.isNotEmpty)
+          Padding(
+            padding: EdgeInsetsDirectional.only(
+              start: widget.compact ? 8 : 12,
+              top: 4,
+            ),
+            child: Text(helper, style: helperStyle),
+          ),
+      ],
     );
   }
 }

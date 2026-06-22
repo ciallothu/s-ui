@@ -3,8 +3,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 import '../core/app_locale_context.dart';
+import '../state/app_state.dart';
 import 'widgets.dart';
 
 enum _EditorMode { visual, json }
@@ -198,7 +200,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
   }
 
   List<Widget> _buildMap(Map<String, dynamic> map, String path) {
-    final entries = map.entries.toList()
+    final entries = map.entries.where((entry) => !schema.isHiddenField(entry.key)).toList()
       ..sort((a, b) {
         final byOrder = schema.orderOf(path, a.key).compareTo(schema.orderOf(path, b.key));
         return byOrder == 0 ? a.key.compareTo(b.key) : byOrder;
@@ -259,6 +261,10 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
       return _buildList(parent, key, fieldValue, path, label);
     }
 
+    if (schema.isWireGuardKeyField(path, key, parent, value)) {
+      return _buildWireGuardKeyField(parent, key, fieldValue, path, label);
+    }
+
     if (options != null && options.isNotEmpty) {
       final current = fieldValue?.toString() ?? '';
       final values = <String>{...options, if (current.isNotEmpty) current}.toList();
@@ -273,7 +279,6 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                   key: ValueKey('$path:$current'),
                   value: current,
                   label: label,
-                  helperText: key,
                   options: [
                     for (final option in values)
                       SelectOption(
@@ -332,6 +337,135 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
         ),
       ),
     );
+  }
+
+  Widget _buildWireGuardKeyField(Map<dynamic, dynamic> parent, String key, dynamic fieldValue, String path, String label) {
+    final current = fieldValue?.toString() ?? '';
+    final redacted = schema.isRedactedSecret(current);
+    final canCopy = current.isNotEmpty && !redacted;
+    final isPsk = key == 'pre_shared_key';
+    final canGeneratePair = key == 'private_key' || key == 'client_private_key' || key == 'public_key';
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: TextFormField(
+                key: ValueKey('$path:$current'),
+                initialValue: current,
+                obscureText: key != 'public_key',
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: label,
+                  helperText: key,
+                  suffixIcon: redacted ? const Icon(Icons.visibility_off_outlined) : null,
+                ),
+                onChanged: (next) {
+                  parent[key] = next.trim();
+                  if (isPsk) parent['pre_shared_key_set'] = next.trim().isNotEmpty;
+                },
+              ),
+            ),
+            Wrap(
+              spacing: 2,
+              children: [
+                IconButton(
+                  tooltip: context.t('resource.copy'),
+                  onPressed: canCopy
+                      ? () {
+                          Clipboard.setData(ClipboardData(text: current));
+                          showMessage(context, context.tr('resource.copied'));
+                        }
+                      : null,
+                  icon: const Icon(Icons.content_copy_outlined),
+                ),
+                if (canGeneratePair)
+                  IconButton(
+                    tooltip: context.t(current.isEmpty || redacted ? 'editor.generateKeyPair' : 'editor.regenerateKeyPair'),
+                    onPressed: () => _generateWireGuardKeyPair(parent, key, path, current),
+                    icon: const Icon(Icons.key_outlined),
+                  ),
+                if (isPsk) ...[
+                  IconButton(
+                    tooltip: context.t(current.isEmpty || redacted ? 'editor.generatePsk' : 'editor.regeneratePsk'),
+                    onPressed: () => _generateWireGuardPsk(parent, current),
+                    icon: const Icon(Icons.enhanced_encryption_outlined),
+                  ),
+                  IconButton(
+                    tooltip: context.t('editor.clearPsk'),
+                    onPressed: current.isEmpty && !boolValue(parent['pre_shared_key_set'])
+                        ? null
+                        : () {
+                            setState(() {
+                              parent[key] = '';
+                              parent['pre_shared_key_set'] = false;
+                              parent['pre_shared_key_clear'] = true;
+                            });
+                          },
+                    icon: const Icon(Icons.clear_outlined),
+                  ),
+                ],
+                _removeButton(parent, key),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _generateWireGuardKeyPair(Map<dynamic, dynamic> parent, String key, String path, String current) async {
+    if ((current.isNotEmpty || boolValue(parent['client_private_key_set']) || boolValue(parent['private_key_set'])) &&
+        !(await confirm(context, title: context.t('editor.regenerateKeyPair'), message: context.t('editor.regenerateSecretMessage')))) {
+      return;
+    }
+    try {
+      final result = await context.read<AppState>().api!.post('tools/keypair', data: {'type': 'wireguard', 'options': ''});
+      final values = result is List ? result.map((item) => item.toString()).toList() : <String>[];
+      final privateKey = _lineValue(values, 'PrivateKey:');
+      final publicKey = _lineValue(values, 'PublicKey:');
+      if (privateKey.isEmpty || publicKey.isEmpty) throw FormatException(context.t('editor.keypairInvalid'));
+      setState(() {
+        if (key == 'private_key' || path == 'ext.public_key') {
+          final root = value is Map<String, dynamic> ? value as Map<String, dynamic> : parent;
+          root['private_key'] = privateKey;
+          root['private_key_set'] = true;
+          final ext = Map<String, dynamic>.from(root['ext'] is Map ? root['ext'] as Map : const {});
+          ext['public_key'] = publicKey;
+          root['ext'] = ext;
+        } else {
+          parent['client_private_key'] = privateKey;
+          parent['client_private_key_set'] = true;
+          parent['public_key'] = publicKey;
+        }
+      });
+    } catch (exception) {
+      if (mounted) showMessage(context, exception.toString(), error: true);
+    }
+  }
+
+  Future<void> _generateWireGuardPsk(Map<dynamic, dynamic> parent, String current) async {
+    if ((current.isNotEmpty || boolValue(parent['pre_shared_key_set'])) &&
+        !(await confirm(context, title: context.t('editor.regeneratePsk'), message: context.t('editor.regenerateSecretMessage')))) {
+      return;
+    }
+    try {
+      final result = await context.read<AppState>().api!.post('tools/keypair', data: {'type': 'wireguard-psk', 'options': ''});
+      final values = result is List ? result.map((item) => item.toString()).toList() : <String>[];
+      final psk = _lineValue(values, 'PresharedKey:');
+      if (psk.isEmpty) throw FormatException(context.t('editor.pskInvalid'));
+      setState(() {
+        parent['pre_shared_key'] = psk;
+        parent['pre_shared_key_set'] = true;
+        parent.remove('pre_shared_key_clear');
+      });
+    } catch (exception) {
+      if (mounted) showMessage(context, exception.toString(), error: true);
+    }
   }
 
   Widget _buildList(Map<dynamic, dynamic> parent, String key, List<dynamic> list, String path, String label) {
@@ -402,7 +536,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: () => setState(() => list.add(_copy(schema.listItemDefault(path)))),
+              onPressed: () => setState(() => list.add(_copy(schema.listItemDefault(path, root: value)))),
               icon: const Icon(Icons.add),
               label: Text(context.t('editor.addItem', args: {'item': context.singularFieldLabel(key)})),
             ),
@@ -431,7 +565,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
     final keyController = TextEditingController();
     var kind = 'text';
     String? suggestedKey;
-    final missing = schema.suggestedKeys(path).where((key) => !parent.containsKey(key)).toList();
+    final missing = schema.suggestedKeys(path, root: value).where((key) => !parent.containsKey(key)).toList();
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -504,6 +638,15 @@ extension _Also<T> on T {
 
 dynamic _copy(dynamic value) => jsonDecode(jsonEncode(value));
 
+bool boolValue(dynamic value) => value == true || value?.toString().toLowerCase() == 'true';
+
+String _lineValue(List<String> lines, String prefix) {
+  for (final line in lines) {
+    if (line.startsWith(prefix)) return line.substring(prefix.length).trim();
+  }
+  return '';
+}
+
 class VisualEditorSchema {
   VisualEditorSchema._(this.resource);
 
@@ -535,6 +678,12 @@ class VisualEditorSchema {
   bool isMultiline(String path, String key) => key == 'certificate' || key == 'key' || key == 'private_key' || key.endsWith('Ext') || key == 'content';
   bool isStringBoolean(String path, String key, dynamic value) => resource == 'settings' && const {'subEncode', 'subShowInfo'}.contains(key);
   bool isStringNumber(String path, String key, dynamic value) => resource == 'settings' && const {'webPort', 'subPort', 'sessionMaxAge', 'trafficAge', 'subUpdates'}.contains(key);
+  bool isHiddenField(String key) => const {'private_key_set', 'client_private_key_set', 'pre_shared_key_set', 'pre_shared_key_clear'}.contains(key);
+  bool isRedactedSecret(String value) => value == '[redacted]' || value.contains('•');
+  bool isWireGuardKeyField(String path, String key, Map<dynamic, dynamic> parent, dynamic root) {
+    if (resource != 'endpoints' || root is! Map || root['type'] != 'wireguard') return false;
+    return const {'private_key', 'public_key', 'client_private_key', 'pre_shared_key'}.contains(key);
+  }
 
   List<String>? optionsFor(String path, String key, Map<dynamic, dynamic> parent) {
     if (path == 'type' && _typeOptions.containsKey(resource)) return _typeOptions[resource];
@@ -546,6 +695,8 @@ class VisualEditorSchema {
     if (key == 'action') return const ['route', 'route-options', 'reject', 'hijack-dns', 'sniff', 'resolve', 'bypass', 'predefined'];
     if (key == 'mode') return const ['and', 'or', 'rule', 'global', 'direct'];
     if (key == 'peer_mode') return const ['roaming_client', 'static_peer', 'site_to_site'];
+    if (key == 'peer_role') return const ['client', 'fixed_node', 'site_gateway'];
+    if (key == 'remote_endpoint_mode') return const ['dynamic', 'static'];
     if (key == 'client_route_preset') return const ['virtual_network', 'single_peer', 'custom', 'full_tunnel'];
     if (key == 'network') return const ['tcp', 'udp'];
     if (key == 'strategy') return const ['', 'prefer_ipv4', 'prefer_ipv6', 'ipv4_only', 'ipv6_only'];
@@ -588,12 +739,24 @@ class VisualEditorSchema {
 
   bool isObjectList(String path) => path.endsWith('.peers') || path.endsWith('.users') || path.endsWith('.links') || path.endsWith('.rules') || path.endsWith('.rule_set') || path.endsWith('.servers') || path == 'peers' || path == 'users' || path == 'links' || path == 'rules' || path == 'rule_set' || path == 'servers';
 
-  dynamic listItemDefault(String path) {
+  dynamic listItemDefault(String path, {dynamic root}) {
     if (path.endsWith('peers') || path == 'peers') {
       if (resource == 'endpoints') {
+        if (root is Map && root['type'] == 'warp') {
+          return {
+            'address': '',
+            'port': 0,
+            'public_key': '',
+            'pre_shared_key': '',
+            'reserved': <int>[],
+            'allowed_ips': <String>[],
+          };
+        }
         return {
-          'name': '', 'peer_mode': 'roaming_client', 'public_key': '', 'client_private_key': '',
+          'name': '', 'peer_role': 'client', 'peer_mode': 'roaming_client', 'remote_endpoint_mode': 'dynamic',
+          'public_key': '', 'client_private_key': '', 'pre_shared_key': '',
           'assigned_ipv4': '', 'assigned_ipv6': '', 'server_allowed_ips': <String>[], 'allowed_ips': <String>[],
+          'remote_site_cidrs': <String>[], 'local_site_cidrs': <String>[], 'route_inbounds': <String>[],
           'client_route_preset': 'virtual_network', 'client_allowed_ips': <String>[], 'client_dns': <String>[],
           'client_mtu': 1420, 'client_keepalive': 25, 'include_ipv4': true, 'include_ipv6': true,
         };
@@ -608,12 +771,16 @@ class VisualEditorSchema {
     return <String, dynamic>{};
   }
 
-  List<String> suggestedKeys(String path) {
+  List<String> suggestedKeys(String path, {dynamic root}) {
     if (path.endsWith('tls') || path == 'server' || path == 'client') return ['enabled', 'server_name', 'insecure', 'disable_sni', 'alpn', 'min_version', 'max_version', 'certificate', 'certificate_path', 'key', 'key_path', 'acme', 'reality', 'ech', 'utls'];
     if (path.endsWith('transport')) return ['type', 'host', 'path', 'method', 'headers', 'service_name', 'idle_timeout', 'ping_timeout'];
     if (path.endsWith('multiplex')) return ['enabled', 'protocol', 'padding', 'max_connections', 'min_streams', 'max_streams', 'brutal'];
     if (path.contains('route')) return ['rules', 'rule_set', 'final', 'auto_detect_interface', 'default_interface', 'default_mark', 'default_domain_resolver'];
     if (path.contains('dns')) return ['servers', 'rules', 'final', 'strategy', 'disable_cache', 'independent_cache', 'cache_capacity', 'reverse_mapping'];
+    if (path.endsWith('peers') || path.contains('peers[')) {
+      if (root is Map && root['type'] == 'warp') return ['address', 'port', 'public_key', 'pre_shared_key', 'reserved', 'allowed_ips'];
+      return ['name', 'peer_role', 'remote_endpoint_mode', 'public_key', 'client_private_key', 'pre_shared_key', 'assigned_ipv4', 'assigned_ipv6', 'remote_site_cidrs', 'local_site_cidrs', 'route_inbounds', 'client_allowed_ips', 'client_dns'];
+    }
     return ['type', 'tag', 'name', 'enabled', 'server', 'server_port', 'listen', 'listen_port', 'network', 'tls', 'transport', 'headers'];
   }
 
@@ -702,7 +869,7 @@ class VisualEditorSchema {
       final base = <String, dynamic>{'id': 0, 'type': type, 'tag': ''};
       final detail = <String, Map<String, dynamic>>{
         'wireguard': {
-          'wireguard_schema': 2,
+          'wireguard_schema': 3,
           'address': ['10.66.66.1/32', 'fd66:66:66::1/128'],
           'tunnel_ipv4_cidr': '10.66.66.0/24',
           'tunnel_ipv6_cidr': 'fd66:66:66::/64',
@@ -711,6 +878,7 @@ class VisualEditorSchema {
           'advertised_endpoint_host': '',
           'advertised_endpoint_port': 0,
           'peer_to_peer_enabled': false,
+          'hub_peer_forwarding_enabled': false,
           'default_client_allowed_ips': ['10.66.66.0/24', 'fd66:66:66::/64'],
           'default_client_dns': <String>[],
           'default_client_mtu': 1420,
@@ -718,16 +886,16 @@ class VisualEditorSchema {
           'system': false,
           'peers': <dynamic>[],
         },
-        'warp': {'address': <String>[], 'private_key': '', 'listen_port': 0, 'mtu': 1420, 'peers': [{'server': '', 'server_port': 0, 'public_key': '', 'allowed_ips': <String>[]}]},
+        'warp': {'address': <String>[], 'private_key': '', 'listen_port': 0, 'mtu': 1420, 'peers': [{'address': '', 'port': 0, 'public_key': '', 'pre_shared_key': '', 'reserved': <int>[], 'allowed_ips': <String>[]}]},
         'tailscale': {'domain_resolver': 'local', 'state_directory': '', 'auth_key': '', 'accept_routes': false, 'advertise_routes': <String>[]},
       };
       return {...base, ...?detail[type]};
     }
     if (resource == 'services') {
       final detail = <String, Map<String, dynamic>>{
-        'derp': {'config_path': '', 'tls_id': 0},
+        'derp': {'listen': '::', 'listen_port': 8443, 'config_path': '', 'tls_id': 0},
         'resolved': {'listen': '::', 'listen_port': 53},
-        'ssm-api': {'tls_id': 0, 'servers': <String, dynamic>{}},
+        'ssm-api': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'servers': <String, dynamic>{}},
         'ocm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'users': <dynamic>[], 'headers': <String, dynamic>{}},
         'ccm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'users': <dynamic>[], 'headers': <String, dynamic>{}},
       };

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -22,22 +23,51 @@ func testWireGuardData(t *testing.T) map[string]interface{} {
 	if err != nil {
 		t.Fatal(err)
 	}
+	psk, err := GenerateWireGuardPresharedKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return map[string]interface{}{
-		"id": 0, "type": "wireguard", "tag": "wireguard-test", "wireguard_schema": 2,
+		"id": 0, "type": "wireguard", "tag": "wireguard-test", "wireguard_schema": 3,
 		"address":          []string{"10.66.66.1/32", "fd66:66:66::1/128"},
 		"tunnel_ipv4_cidr": "10.66.66.0/24", "tunnel_ipv6_cidr": "fd66:66:66::/64",
 		"private_key": serverKey.String(), "listen_port": 20522,
 		"advertised_endpoint_host": "vpn.example.com", "advertised_endpoint_port": 20522,
 		"peer_to_peer_enabled":       true,
+		"hub_peer_forwarding_enabled": true,
 		"default_client_allowed_ips": []string{"10.66.66.0/24", "fd66:66:66::/64"},
 		"default_client_dns":         []string{"10.66.66.1"}, "default_client_mtu": 1420, "default_client_keepalive": 25,
 		"peers": []interface{}{map[string]interface{}{
-			"name": "Laptop", "peer_mode": "roaming_client", "public_key": clientKey.PublicKey().String(),
-			"client_private_key": clientKey.String(), "assigned_ipv4": "10.66.66.2/32", "assigned_ipv6": "fd66:66:66::2/128",
+			"name": "Laptop", "peer_mode": "roaming_client", "peer_role": "client", "remote_endpoint_mode": "dynamic", "public_key": clientKey.PublicKey().String(),
+			"client_private_key": clientKey.String(), "pre_shared_key": psk, "assigned_ipv4": "10.66.66.2/32", "assigned_ipv6": "fd66:66:66::2/128",
 			"client_route_preset": "virtual_network", "client_allowed_ips": []string{"10.66.66.0/24", "fd66:66:66::/64"},
 			"include_ipv4": true, "include_ipv6": true,
 		}},
 		"ext": map[string]interface{}{"public_key": serverKey.PublicKey().String(), "keys": []interface{}{}},
+	}
+}
+
+func TestGenerateWireGuardPresharedKeyIsRandomBase64(t *testing.T) {
+	first, err := GenerateWireGuardPresharedKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := GenerateWireGuardPresharedKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("generated PSKs should not repeat")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 32 {
+		t.Fatalf("PSK must decode to 32 bytes, got %d", len(decoded))
+	}
+	if _, err := wgtypes.ParseKey(first); err != nil {
+		t.Fatalf("PSK must be compatible with WireGuard keys: %v", err)
 	}
 }
 
@@ -132,11 +162,53 @@ func TestWireGuardRuntimeJSONStripsEditorMetadata(t *testing.T) {
 	}
 }
 
+func TestWireGuardRuntimeJSONStripsDynamicSiteGatewayEndpoint(t *testing.T) {
+	data := testWireGuardData(t)
+	peer := mapValue(listValue(data["peers"])[0])
+	peer["peer_role"] = "site_gateway"
+	peer["peer_mode"] = "site_to_site"
+	peer["remote_endpoint_mode"] = "dynamic"
+	peer["remote_site_cidrs"] = []string{"192.168.50.0/24"}
+	peer["static_remote_address"] = "198.51.100.10"
+	peer["static_remote_port"] = 51820
+	peer["address"] = "198.51.100.10"
+	peer["port"] = 51820
+	raw, _ := json.Marshal(data)
+	normalized, err := normalizeAndValidateWireGuard(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endpoint model.Endpoint
+	if err := endpoint.UnmarshalJSON(normalized); err != nil {
+		t.Fatal(err)
+	}
+	runtimeJSON, err := endpoint.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(runtimeJSON, &root); err != nil {
+		t.Fatal(err)
+	}
+	runtimePeer := mapValue(listValue(root["peers"])[0])
+	if _, exists := runtimePeer["address"]; exists {
+		t.Fatalf("dynamic site gateway must not contain static address: %s", runtimeJSON)
+	}
+	if _, exists := runtimePeer["port"]; exists {
+		t.Fatalf("dynamic site gateway must not contain static port: %s", runtimeJSON)
+	}
+	if _, exists := runtimePeer["remote_site_cidrs"]; exists {
+		t.Fatalf("runtime JSON leaked site-gateway metadata: %s", runtimeJSON)
+	}
+}
+
 func TestWireGuardExportUsesAdvertisedEndpointAndSplitTunnel(t *testing.T) {
 	if err := database.InitDB(filepath.Join(t.TempDir(), "s-ui.db")); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(testWireGuardData(t))
+	fixture := testWireGuardData(t)
+	storedPeer := mapValue(listValue(fixture["peers"])[0])
+	raw, _ := json.Marshal(fixture)
 	var endpoint model.Endpoint
 	if err := endpoint.UnmarshalJSON(raw); err != nil {
 		t.Fatal(err)
@@ -156,6 +228,124 @@ func TestWireGuardExportUsesAdvertisedEndpointAndSplitTunnel(t *testing.T) {
 	}
 	if strings.Contains(result.Config, "0.0.0.0/0") {
 		t.Fatalf("split-tunnel export unexpectedly contains a default route: %s", result.Config)
+	}
+	if !strings.Contains(result.Config, "PresharedKey = "+stringValue(storedPeer["pre_shared_key"])) {
+		t.Fatalf("export did not include the stored PSK: %s", result.Config)
+	}
+}
+
+func TestWireGuardGetAllRedactsSecrets(t *testing.T) {
+	if err := database.InitDB(filepath.Join(t.TempDir(), "s-ui.db")); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(testWireGuardData(t))
+	var endpoint model.Endpoint
+	if err := endpoint.UnmarshalJSON(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GetDB().Create(&endpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := (&EndpointService{}).GetAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := (*result)[0]
+	if stringValue(item["private_key"]) != wireGuardRedactedSecret || !boolValue(item["private_key_set"], false) {
+		t.Fatalf("server private key was not redacted: %#v", item)
+	}
+	peer := mapValue(listValue(item["peers"])[0])
+	for _, key := range []string{"client_private_key", "pre_shared_key"} {
+		if stringValue(peer[key]) != wireGuardRedactedSecret {
+			t.Fatalf("%s was not redacted: %#v", key, peer)
+		}
+	}
+}
+
+func TestMergeWireGuardSecretsPreservesRedactedPSK(t *testing.T) {
+	data := testWireGuardData(t)
+	raw, _ := json.Marshal(data)
+	var endpoint model.Endpoint
+	if err := endpoint.UnmarshalJSON(raw); err != nil {
+		t.Fatal(err)
+	}
+	next := testWireGuardData(t)
+	next["private_key"] = wireGuardRedactedSecret
+	peer := mapValue(listValue(next["peers"])[0])
+	peer["public_key"] = mapValue(listValue(data["peers"])[0])["public_key"]
+	peer["client_private_key"] = wireGuardRedactedSecret
+	peer["pre_shared_key"] = wireGuardRedactedSecret
+	nextRaw, _ := json.Marshal(next)
+	merged, err := mergeWireGuardSecrets(nextRaw, &endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(merged, &root); err != nil {
+		t.Fatal(err)
+	}
+	mergedPeer := mapValue(listValue(root["peers"])[0])
+	oldPeer := mapValue(listValue(data["peers"])[0])
+	if stringValue(mergedPeer["pre_shared_key"]) != stringValue(oldPeer["pre_shared_key"]) {
+		t.Fatalf("PSK was not preserved: %#v", mergedPeer)
+	}
+	if stringValue(mergedPeer["client_private_key"]) != stringValue(oldPeer["client_private_key"]) {
+		t.Fatalf("client private key was not preserved: %#v", mergedPeer)
+	}
+}
+
+func TestWireGuardSiteGatewayRoutesRemoteSite(t *testing.T) {
+	data := testWireGuardData(t)
+	peer := mapValue(listValue(data["peers"])[0])
+	peer["peer_role"] = "site_gateway"
+	peer["peer_mode"] = "site_to_site"
+	peer["remote_endpoint_mode"] = "dynamic"
+	peer["remote_site_cidrs"] = []string{"192.168.50.0/24", "fd50:50:50::/64"}
+	peer["local_site_cidrs"] = []string{"192.168.100.0/24"}
+	raw, _ := json.Marshal(data)
+	normalized, err := normalizeAndValidateWireGuard(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(normalized, &root); err != nil {
+		t.Fatal(err)
+	}
+	normalizedPeer := mapValue(listValue(root["peers"])[0])
+	serverAllowed := strings.Join(stringsValue(normalizedPeer["server_allowed_ips"]), ",")
+	if !strings.Contains(serverAllowed, "192.168.50.0/24") || !strings.Contains(serverAllowed, "fd50:50:50::/64") {
+		t.Fatalf("site gateway remote CIDRs were not added to server allowed IPs: %s", serverAllowed)
+	}
+
+	if err := database.InitDB(filepath.Join(t.TempDir(), "s-ui.db")); err != nil {
+		t.Fatal(err)
+	}
+	var endpoint model.Endpoint
+	if err := endpoint.UnmarshalJSON(normalized); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.GetDB().Create(&endpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := syncWireGuardManagedRoute(database.GetDB(), &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	var routes []model.ManagedRouteRule
+	if err := database.GetDB().Where("managed_key like ?", "wireguard-site-gateway:%").Find(&routes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || !strings.Contains(routes[0].CIDRs, "192.168.50.0/24") {
+		t.Fatalf("site gateway managed route was not created: %#v", routes)
+	}
+	exported, err := (&EndpointService{}).ExportWireGuardPeer(endpoint.Tag, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(exported.Config, "192.168.100.0/24") {
+		t.Fatalf("site gateway export did not include local site CIDR: %s", exported.Config)
+	}
+	if strings.Contains(exported.Config, "192.168.50.0/24") {
+		t.Fatalf("site gateway export must not route the remote site's own LAN back into the tunnel: %s", exported.Config)
 	}
 }
 
