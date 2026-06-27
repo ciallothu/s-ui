@@ -30,11 +30,11 @@ type ConnectionEntry struct {
 	User            string             `json:"user,omitempty"`
 	Event           string             `json:"event"`
 	Remote          string             `json:"remote,omitempty"`
-	RemoteInfo      *ConnectionIPInfo  `json:"remoteInfo,omitempty"`
+	RemoteInfo      *ConnectionIPInfo `json:"remoteInfo,omitempty"`
 	Destination     string             `json:"destination,omitempty"`
-	DestinationInfo *ConnectionIPInfo  `json:"destinationInfo,omitempty"`
+	DestinationInfo *ConnectionIPInfo `json:"destinationInfo,omitempty"`
 	Source          string             `json:"source,omitempty"`
-	SourceInfo      *ConnectionIPInfo  `json:"sourceInfo,omitempty"`
+	SourceInfo      *ConnectionIPInfo `json:"sourceInfo,omitempty"`
 	Message         string             `json:"message"`
 }
 
