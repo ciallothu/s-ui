@@ -22,17 +22,33 @@ type ConnectionFilter struct {
 }
 
 type ConnectionEntry struct {
-	Timestamp   int64  `json:"timestamp"`
-	Time        string `json:"time"`
-	Resource    string `json:"resource"`
-	Protocol    string `json:"protocol"`
-	Tag         string `json:"tag"`
-	User        string `json:"user,omitempty"`
-	Event       string `json:"event"`
-	Remote      string `json:"remote,omitempty"`
-	Destination string `json:"destination,omitempty"`
-	Source      string `json:"source,omitempty"`
-	Message     string `json:"message"`
+	Timestamp       int64              `json:"timestamp"`
+	Time            string             `json:"time"`
+	Resource        string             `json:"resource"`
+	Protocol        string             `json:"protocol"`
+	Tag             string             `json:"tag"`
+	User            string             `json:"user,omitempty"`
+	Event           string             `json:"event"`
+	Remote          string             `json:"remote,omitempty"`
+	RemoteInfo      *ConnectionIPInfo  `json:"remoteInfo,omitempty"`
+	Destination     string             `json:"destination,omitempty"`
+	DestinationInfo *ConnectionIPInfo  `json:"destinationInfo,omitempty"`
+	Source          string             `json:"source,omitempty"`
+	SourceInfo      *ConnectionIPInfo  `json:"sourceInfo,omitempty"`
+	Message         string             `json:"message"`
+}
+
+type ConnectionIPInfo struct {
+	Address     string `json:"address,omitempty"`
+	Host        string `json:"host,omitempty"`
+	Port        string `json:"port,omitempty"`
+	IP          string `json:"ip,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	Attribution string `json:"attribution,omitempty"`
+	ISP         string `json:"isp,omitempty"`
+	ASN         string `json:"asn,omitempty"`
+	Country     string `json:"country,omitempty"`
+	Network     string `json:"network,omitempty"`
 }
 
 type ConnectionSummary struct {
@@ -59,7 +75,7 @@ var (
 	connectionFromPattern   = regexp.MustCompile(`\bconnection\s+from\s+([^,\s]+)`)
 )
 
-func parseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
+func ParseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
 	message := strings.TrimSpace(entry.Message)
 	matches := connectionPrefixPattern.FindStringSubmatch(message)
 	if len(matches) == 0 {
@@ -79,14 +95,22 @@ func parseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
 	if to := connectionToPattern.FindStringSubmatch(detail); len(to) > 1 {
 		result.Destination = strings.TrimSpace(to[1])
 		result.Remote = result.Destination
+		result.DestinationInfo = describeConnectionAddress(result.Destination)
+		result.RemoteInfo = result.DestinationInfo
 	}
 	if from := connectionFromPattern.FindStringSubmatch(detail); len(from) > 1 {
 		result.Source = strings.TrimSpace(from[1])
+		result.SourceInfo = describeConnectionAddress(result.Source)
 		if result.Remote == "" {
 			result.Remote = result.Source
+			result.RemoteInfo = result.SourceInfo
 		}
 	}
 	return result, true
+}
+
+func parseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
+	return ParseConnectionLog(entry)
 }
 
 func (s *StatsService) QueryConnections(filter ConnectionFilter) (*ConnectionQueryResult, error) {
@@ -97,11 +121,13 @@ func (s *StatsService) QueryConnections(filter ConnectionFilter) (*ConnectionQue
 	})
 
 	items := make([]ConnectionEntry, 0, len(logs))
+	ownerBudget := NewConnectionOwnerLookupBudget(32)
 	for _, logEntry := range logs {
-		item, ok := parseConnectionLog(logEntry)
+		item, ok := ParseConnectionLog(logEntry)
 		if !ok || !connectionMatches(item, filter) {
 			continue
 		}
+		enrichConnectionEntryOwners(&item, ownerBudget)
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Timestamp > items[j].Timestamp })
@@ -159,6 +185,7 @@ func connectionMatches(item ConnectionEntry, filter ConnectionFilter) bool {
 	}
 	haystack := strings.ToLower(strings.Join([]string{
 		item.Resource, item.Protocol, item.Tag, item.User, item.Event, item.Remote, item.Destination, item.Source, item.Message,
+		connectionIPInfoText(item.RemoteInfo), connectionIPInfoText(item.DestinationInfo), connectionIPInfoText(item.SourceInfo),
 	}, " "))
 	return strings.Contains(haystack, search)
 }
@@ -225,6 +252,15 @@ func summarizeConnections(items []ConnectionEntry) map[string][]ConnectionSummar
 		result[kind] = values
 	}
 	return result
+}
+
+func connectionIPInfoText(info *ConnectionIPInfo) string {
+	if info == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		info.Address, info.Host, info.Port, info.IP, info.Scope, info.Attribution, info.ISP, info.ASN, info.Country, info.Network,
+	}, " ")
 }
 
 func normalizeRemote(value string) string {

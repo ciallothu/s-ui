@@ -123,17 +123,133 @@ class _LogsPageState extends State<LogsPage> {
       'DEBUG' => Colors.grey,
       _ => Colors.blue,
     };
+    final connection = _connectionFromLog(item);
+    final connectionMeta = connection == null
+        ? null
+        : _endpointSummary(context, _endpointInfo(connection, 'sourceInfo')) ?? _endpointSummary(context, _endpointInfo(connection, 'destinationInfo'));
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
         leading: CircleAvatar(radius: 18, backgroundColor: color.withValues(alpha: .15), child: Icon(Icons.receipt_long_outlined, size: 18, color: color)),
         title: Text(item['message']?.toString() ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['source'] ?? 'system'}${item['user']?.toString().isNotEmpty == true ? ' · ${item['user']}' : ''}'),
+        subtitle: Text(
+          [
+            '${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['source'] ?? 'system'}${item['user']?.toString().isNotEmpty == true ? ' · ${item['user']}' : ''}',
+            if (connectionMeta != null) connectionMeta,
+          ].join('\n'),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
         trailing: Chip(label: Text(logLevel), side: BorderSide.none),
-        children: [Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: Align(alignment: Alignment.centerLeft, child: SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace'))))],
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (connection != null) ..._endpointDetailWidgets(context, connection),
+                  SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace')),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
 String _date(DateTime value) => '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
+
+Map<String, dynamic>? _connectionFromLog(Map<String, dynamic> item) {
+  final connection = item['connection'];
+  if (connection is Map) return Map<String, dynamic>.from(connection);
+  return null;
+}
+
+Map<String, dynamic>? _endpointInfo(Map<String, dynamic> item, String key) {
+  final raw = item[key];
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  return null;
+}
+
+String? _endpointSummary(BuildContext context, Map<String, dynamic>? info) {
+  if (info == null) return null;
+  final ip = info['ip']?.toString();
+  final host = info['host']?.toString();
+  final attribution = info['attribution']?.toString();
+  final isp = info['isp']?.toString();
+  final scope = _scopeLabel(context, info['scope']?.toString());
+  final parts = <String>[
+    if (ip != null && ip.isNotEmpty) ip else if (host != null && host.isNotEmpty) host,
+    if (attribution != null && attribution.isNotEmpty) attribution else if (scope.isNotEmpty) scope,
+    if (isp != null && isp.isNotEmpty) isp,
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join(' · ');
+}
+
+List<Widget> _endpointDetailWidgets(BuildContext context, Map<String, dynamic> item) {
+  final source = _endpointInfo(item, 'sourceInfo');
+  final destination = _endpointInfo(item, 'destinationInfo');
+  final remote = _endpointInfo(item, 'remoteInfo');
+  return [
+    if (source != null) ..._endpointLines(context, context.t('analytics.source'), source),
+    if (destination != null) ..._endpointLines(context, context.t('analytics.destination'), destination),
+    if (remote != null && !_sameEndpoint(remote, source) && !_sameEndpoint(remote, destination)) ..._endpointLines(context, context.t('analytics.remote'), remote),
+  ];
+}
+
+List<Widget> _endpointLines(BuildContext context, String title, Map<String, dynamic> info) {
+  final values = <MapEntry<String, String>>[
+    MapEntry(context.t('analytics.ipAddress'), info['ip']?.toString() ?? info['host']?.toString() ?? ''),
+    MapEntry(context.t('analytics.ipAttribution'), info['attribution']?.toString() ?? _scopeLabel(context, info['scope']?.toString())),
+    MapEntry(context.t('analytics.isp'), info['isp']?.toString() ?? ''),
+    MapEntry(context.t('analytics.asn'), info['asn']?.toString() ?? ''),
+    MapEntry(context.t('analytics.country'), info['country']?.toString() ?? ''),
+    MapEntry(context.t('analytics.network'), info['network']?.toString() ?? ''),
+  ].where((entry) => entry.value.isNotEmpty).toList();
+  if (values.isEmpty) return const <Widget>[];
+  return [
+    Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+    ),
+    for (final value in values)
+      Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 96, child: Text(value.key, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+            Expanded(child: SelectableText(value.value)),
+          ],
+        ),
+      ),
+  ];
+}
+
+bool _sameEndpoint(Map<String, dynamic>? left, Map<String, dynamic>? right) {
+  if (left == null || right == null) return false;
+  return left['address']?.toString() == right['address']?.toString() &&
+      left['ip']?.toString() == right['ip']?.toString() &&
+      left['host']?.toString() == right['host']?.toString();
+}
+
+String _scopeLabel(BuildContext context, String? scope) {
+  if (scope == null || scope.isEmpty) return '';
+  final key = switch (scope) {
+    'private' => 'analytics.scopePrivate',
+    'loopback' => 'analytics.scopeLoopback',
+    'link_local' => 'analytics.scopeLinkLocal',
+    'multicast' => 'analytics.scopeMulticast',
+    'reserved' => 'analytics.scopeReserved',
+    'unspecified' => 'analytics.scopeReserved',
+    'public' => 'analytics.scopePublic',
+    'domain' => 'analytics.scopeDomain',
+    _ => 'analytics.scopeUnknown',
+  };
+  return context.t(key);
+}

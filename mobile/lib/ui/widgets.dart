@@ -163,9 +163,11 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: Row(
                               children: [
-                                SizedBox(width: 24, child: selected ? const Icon(Icons.check, size: 20) : null),
-                                const SizedBox(width: 8),
                                 Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                if (selected) ...[
+                                  const SizedBox(width: 8),
+                                  const Icon(Icons.check, size: 20),
+                                ],
                               ],
                             ),
                           ),

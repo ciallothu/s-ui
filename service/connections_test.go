@@ -50,6 +50,16 @@ func TestParseConnectionLogExamples(t *testing.T) {
 	}
 }
 
+func TestConnectionIPInfo(t *testing.T) {
+	entry, ok := parseConnectionLog(logger.LogEntry{Timestamp: 1, Time: "2026/06/18 23:03:09", Message: "inbound/vless[vless-443]inbound connection from 10.0.0.2:61748"})
+	if !ok {
+		t.Fatalf("message was not parsed")
+	}
+	if entry.SourceInfo == nil || entry.SourceInfo.IP != "10.0.0.2" || entry.SourceInfo.Scope != "private" || entry.SourceInfo.Port != "61748" {
+		t.Fatalf("source info missing: %#v", entry.SourceInfo)
+	}
+}
+
 func TestConnectionSummaryIncludesEndpoints(t *testing.T) {
 	summary := summarizeConnections([]ConnectionEntry{{Resource: "endpoint", Tag: "office", User: "alice", Remote: "10.0.0.2:443", Timestamp: 100}})
 	if len(summary["endpoints"]) != 1 || summary["endpoints"][0].Tag != "office" {

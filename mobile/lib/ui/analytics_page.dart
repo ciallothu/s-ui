@@ -350,14 +350,26 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
         ),
       );
 
-  Widget _connectionTile(Map<String, dynamic> item, {bool openRaw = false}) => ListTile(
-        dense: true,
-        leading: Icon(item['resource'] == 'outbound' ? Icons.call_made : Icons.call_received),
-        title: Text('${item['resource']}/${item['protocol']}[${item['tag']}]'),
-        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['user']?.toString().isNotEmpty == true ? item['user'] : context.t('common.all')} · ${_connectionTarget(item)}'),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: openRaw ? () => _showConnectionLog(item) : () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
-      );
+  Widget _connectionTile(Map<String, dynamic> item, {bool openRaw = false}) {
+    final sourceInfo = _endpointInfo(item, 'sourceInfo');
+    final destinationInfo = _endpointInfo(item, 'destinationInfo');
+    final meta = _endpointSummary(context, sourceInfo) ?? _endpointSummary(context, destinationInfo);
+    return ListTile(
+      dense: true,
+      leading: Icon(item['resource'] == 'outbound' ? Icons.call_made : Icons.call_received),
+      title: Text('${item['resource']}/${item['protocol']}[${item['tag']}]'),
+      subtitle: Text(
+        [
+          '${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['user']?.toString().isNotEmpty == true ? item['user'] : context.t('common.all')} · ${_connectionTarget(item)}',
+          if (meta != null) meta,
+        ].join('\n'),
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: openRaw ? () => _showConnectionLog(item) : () => _showConnectionDetails(item['resource']?.toString() ?? 'all', item['tag']?.toString() ?? ''),
+    );
+  }
 
   Widget _logs() {
     if (logItems.isEmpty) return EmptyState(label: context.t('logs.empty'));
@@ -378,14 +390,39 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
   Widget _logCard(Map<String, dynamic> item) {
     final logLevel = item['level']?.toString() ?? 'INFO';
     final color = _levelColor(logLevel);
+    final connection = _connectionFromLog(item);
+    final connectionMeta = connection == null
+        ? null
+        : _endpointSummary(context, _endpointInfo(connection, 'sourceInfo')) ?? _endpointSummary(context, _endpointInfo(connection, 'destinationInfo'));
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ExpansionTile(
         leading: CircleAvatar(radius: 18, backgroundColor: color.withValues(alpha: .15), child: Icon(Icons.receipt_long_outlined, size: 18, color: color)),
         title: Text(item['message']?.toString() ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-        subtitle: Text('${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['source'] ?? 'system'}${item['user']?.toString().isNotEmpty == true ? ' · ${item['user']}' : ''}'),
+        subtitle: Text(
+          [
+            '${item['time'] ?? formatTimestamp(item['timestamp'])} · ${item['source'] ?? 'system'}${item['user']?.toString().isNotEmpty == true ? ' · ${item['user']}' : ''}',
+            if (connectionMeta != null) connectionMeta,
+          ].join('\n'),
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
         trailing: Chip(label: Text(logLevel), side: BorderSide.none),
-        children: [Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 16), child: Align(alignment: Alignment.centerLeft, child: SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace'))))],
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (connection != null) ..._endpointDetailWidgets(context, connection),
+                  SelectableText(item['message']?.toString() ?? '', style: const TextStyle(fontFamily: 'monospace')),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -449,6 +486,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               _detailLine(sheetContext, sheetContext.t('analytics.destination'), item['destination']?.toString()),
               _detailLine(sheetContext, sheetContext.t('analytics.source'), item['source']?.toString()),
               _detailLine(sheetContext, sheetContext.t('analytics.remote'), item['remote']?.toString()),
+              ..._endpointDetailWidgets(sheetContext, item),
               const Divider(height: 24),
               Text(sheetContext.t('analytics.rawMessage'), style: Theme.of(sheetContext).textTheme.titleSmall),
               const SizedBox(height: 8),
@@ -552,3 +590,94 @@ Color _levelColor(String level) => switch (level) {
       'DEBUG' => Colors.grey,
       _ => Colors.blue,
     };
+
+Map<String, dynamic>? _connectionFromLog(Map<String, dynamic> item) {
+  final connection = item['connection'];
+  if (connection is Map) return Map<String, dynamic>.from(connection);
+  return null;
+}
+
+Map<String, dynamic>? _endpointInfo(Map<String, dynamic> item, String key) {
+  final raw = item[key];
+  if (raw is Map) return Map<String, dynamic>.from(raw);
+  return null;
+}
+
+String? _endpointSummary(BuildContext context, Map<String, dynamic>? info) {
+  if (info == null) return null;
+  final ip = info['ip']?.toString();
+  final host = info['host']?.toString();
+  final attribution = info['attribution']?.toString();
+  final isp = info['isp']?.toString();
+  final scope = _scopeLabel(context, info['scope']?.toString());
+  final parts = <String>[
+    if (ip != null && ip.isNotEmpty) ip else if (host != null && host.isNotEmpty) host,
+    if (attribution != null && attribution.isNotEmpty) attribution else if (scope.isNotEmpty) scope,
+    if (isp != null && isp.isNotEmpty) isp,
+  ];
+  if (parts.isEmpty) return null;
+  return parts.join(' · ');
+}
+
+List<Widget> _endpointDetailWidgets(BuildContext context, Map<String, dynamic> item) {
+  final source = _endpointInfo(item, 'sourceInfo');
+  final destination = _endpointInfo(item, 'destinationInfo');
+  final remote = _endpointInfo(item, 'remoteInfo');
+  return [
+    if (source != null) ..._endpointLines(context, context.t('analytics.source'), source),
+    if (destination != null) ..._endpointLines(context, context.t('analytics.destination'), destination),
+    if (remote != null && !_sameEndpoint(remote, source) && !_sameEndpoint(remote, destination)) ..._endpointLines(context, context.t('analytics.remote'), remote),
+  ];
+}
+
+bool _sameEndpoint(Map<String, dynamic>? left, Map<String, dynamic>? right) {
+  if (left == null || right == null) return false;
+  return left['address']?.toString() == right['address']?.toString() &&
+      left['ip']?.toString() == right['ip']?.toString() &&
+      left['host']?.toString() == right['host']?.toString();
+}
+
+List<Widget> _endpointLines(BuildContext context, String title, Map<String, dynamic> info) {
+  final values = <MapEntry<String, String>>[
+    MapEntry(context.t('analytics.ipAddress'), info['ip']?.toString() ?? info['host']?.toString() ?? ''),
+    MapEntry(context.t('analytics.ipAttribution'), info['attribution']?.toString() ?? _scopeLabel(context, info['scope']?.toString())),
+    MapEntry(context.t('analytics.isp'), info['isp']?.toString() ?? ''),
+    MapEntry(context.t('analytics.asn'), info['asn']?.toString() ?? ''),
+    MapEntry(context.t('analytics.country'), info['country']?.toString() ?? ''),
+    MapEntry(context.t('analytics.network'), info['network']?.toString() ?? ''),
+  ].where((entry) => entry.value.isNotEmpty).toList();
+  if (values.isEmpty) return const <Widget>[];
+  return [
+    Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+    ),
+    for (final value in values)
+      Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 96, child: Text(value.key, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+            Expanded(child: SelectableText(value.value)),
+          ],
+        ),
+      ),
+  ];
+}
+
+String _scopeLabel(BuildContext context, String? scope) {
+  if (scope == null || scope.isEmpty) return '';
+  final key = switch (scope) {
+    'private' => 'analytics.scopePrivate',
+    'loopback' => 'analytics.scopeLoopback',
+    'link_local' => 'analytics.scopeLinkLocal',
+    'multicast' => 'analytics.scopeMulticast',
+    'reserved' => 'analytics.scopeReserved',
+    'unspecified' => 'analytics.scopeReserved',
+    'public' => 'analytics.scopePublic',
+    'domain' => 'analytics.scopeDomain',
+    _ => 'analytics.scopeUnknown',
+  };
+  return context.t(key);
+}

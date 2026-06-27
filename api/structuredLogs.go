@@ -11,6 +11,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type structuredLogEntry struct {
+	logger.LogEntry
+	Connection *service.ConnectionEntry `json:"connection,omitempty"`
+}
+
 func (a *ApiService) queryStructuredLogs(level, user, search string, start, end int64, offset, limit int) (gin.H, error) {
 	level = strings.ToUpper(strings.TrimSpace(level))
 	if offset < 0 {
@@ -52,7 +57,20 @@ func (a *ApiService) queryStructuredLogs(level, user, search string, start, end 
 	if pageEnd > total {
 		pageEnd = total
 	}
-	return gin.H{"items": entries[offset:pageEnd], "total": total, "offset": offset, "limit": limit}, nil
+	items := make([]structuredLogEntry, 0, pageEnd-offset)
+	ownerBudget := service.NewConnectionOwnerLookupBudget(32)
+	for _, entry := range entries[offset:pageEnd] {
+		item := structuredLogEntry{LogEntry: entry}
+		if connection, ok := service.ParseConnectionLog(entry); ok {
+			service.EnrichConnectionEntryOwnersWithBudget(&connection, ownerBudget)
+			if item.User == "" {
+				item.User = connection.User
+			}
+			item.Connection = &connection
+		}
+		items = append(items, item)
+	}
+	return gin.H{"items": items, "total": total, "offset": offset, "limit": limit}, nil
 }
 
 func (a *ApiService) GetStructuredLogs(c *gin.Context) {

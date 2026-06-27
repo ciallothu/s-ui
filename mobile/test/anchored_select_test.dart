@@ -42,6 +42,9 @@ void main() {
     expect(menu.width, closeTo(target.width, 0.1));
     expect(menu.top, closeTo(target.bottom - 2, 0.1));
     expect(menu.height, closeTo(kMinInteractiveDimension * 5, 0.1));
+    final selectedText = tester.getRect(find.descendant(of: find.byKey(const ValueKey('anchored-select-menu')), matching: find.text('One')));
+    final selectedCheck = tester.getRect(find.byIcon(Icons.check));
+    expect(selectedCheck.left, greaterThan(selectedText.right));
 
     await tester.drag(find.byKey(const ValueKey('anchored-select-menu')), const Offset(0, -240));
     await tester.pumpAndSettle();
