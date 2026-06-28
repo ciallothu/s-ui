@@ -30,7 +30,7 @@ func TestParseConnectionLogExamples(t *testing.T) {
 		{
 			message:  "inbound/vless[vless-443]inbound connection from 166.111.232.125:61748",
 			resource: "inbound", protocol: "vless", tag: "vless-443",
-			remote: "166.111.232.125:61748", source: "166.111.232.125:61748",
+			source: "166.111.232.125:61748",
 		},
 		{
 			message:  "endpoint/wireguard[office] endpoint connection to 10.0.0.2:443",
@@ -50,6 +50,37 @@ func TestParseConnectionLogExamples(t *testing.T) {
 	}
 }
 
+func TestAttachConnectionSources(t *testing.T) {
+	items := []ConnectionEntry{
+		{
+			Timestamp:   100,
+			Resource:    "inbound",
+			Protocol:    "vless",
+			Tag:         "vless-443",
+			User:        "刘晓辰",
+			Destination: "www.gstatic.com:80",
+		},
+		{
+			Timestamp: 101,
+			Resource:  "inbound",
+			Protocol:  "vless",
+			Tag:       "vless-443",
+			Source:    "166.111.232.125:61748",
+			SourceInfo: &ConnectionIPInfo{
+				Address: "166.111.232.125:61748",
+				Host:    "166.111.232.125",
+				Port:    "61748",
+				IP:      "166.111.232.125",
+			},
+		},
+	}
+
+	AttachConnectionSources(items)
+	if items[0].Source != "166.111.232.125:61748" || items[0].SourceInfo == nil || items[0].SourceInfo.IP != "166.111.232.125" {
+		t.Fatalf("source was not attached to user connection: %#v", items[0])
+	}
+}
+
 func TestConnectionIPInfo(t *testing.T) {
 	entry, ok := parseConnectionLog(logger.LogEntry{Timestamp: 1, Time: "2026/06/18 23:03:09", Message: "inbound/vless[vless-443]inbound connection from 10.0.0.2:61748"})
 	if !ok {
@@ -61,11 +92,14 @@ func TestConnectionIPInfo(t *testing.T) {
 }
 
 func TestConnectionSummaryIncludesEndpoints(t *testing.T) {
-	summary := summarizeConnections([]ConnectionEntry{{Resource: "endpoint", Tag: "office", User: "alice", Remote: "10.0.0.2:443", Timestamp: 100}})
+	summary := summarizeConnections([]ConnectionEntry{
+		{Resource: "endpoint", Tag: "office", User: "alice", Destination: "10.0.0.2:443", Timestamp: 100},
+		{Resource: "inbound", Protocol: "vless", Tag: "vless-443", Source: "166.111.232.125:61748", Timestamp: 101},
+	})
 	if len(summary["endpoints"]) != 1 || summary["endpoints"][0].Tag != "office" {
 		t.Fatalf("endpoint summary missing: %#v", summary)
 	}
 	if len(summary["destinations"]) != 1 || summary["destinations"][0].Tag != "10.0.0.2" {
-		t.Fatalf("destination summary missing: %#v", summary)
+		t.Fatalf("destination summary should only include targets: %#v", summary)
 	}
 }

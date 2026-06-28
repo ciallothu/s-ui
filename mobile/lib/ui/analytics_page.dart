@@ -485,7 +485,6 @@ class _AnalyticsPageState extends State<AnalyticsPage> with SingleTickerProvider
               _detailLine(sheetContext, sheetContext.t('analytics.user'), item['user']?.toString()),
               _detailLine(sheetContext, sheetContext.t('analytics.destination'), item['destination']?.toString()),
               _detailLine(sheetContext, sheetContext.t('analytics.source'), item['source']?.toString()),
-              _detailLine(sheetContext, sheetContext.t('analytics.remote'), item['remote']?.toString()),
               ..._endpointDetailWidgets(sheetContext, item),
               const Divider(height: 24),
               Text(sheetContext.t('analytics.rawMessage'), style: Theme.of(sheetContext).textTheme.titleSmall),
@@ -583,7 +582,7 @@ class _TrafficPainter extends CustomPainter {
 int _int(dynamic value) => int.tryParse(value?.toString() ?? '') ?? 0;
 String _date(DateTime value) => '${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 String _connectionTarget(Map<String, dynamic> item) =>
-    item['destination']?.toString().isNotEmpty == true ? item['destination'].toString() : item['source']?.toString().isNotEmpty == true ? item['source'].toString() : item['remote']?.toString().isNotEmpty == true ? item['remote'].toString() : '—';
+    item['destination']?.toString().isNotEmpty == true ? item['destination'].toString() : item['source']?.toString().isNotEmpty == true ? item['source'].toString() : '—';
 Color _levelColor(String level) => switch (level) {
       'ERROR' => Colors.red,
       'WARNING' => Colors.orange,
@@ -622,19 +621,10 @@ String? _endpointSummary(BuildContext context, Map<String, dynamic>? info) {
 List<Widget> _endpointDetailWidgets(BuildContext context, Map<String, dynamic> item) {
   final source = _endpointInfo(item, 'sourceInfo');
   final destination = _endpointInfo(item, 'destinationInfo');
-  final remote = _endpointInfo(item, 'remoteInfo');
   return [
     if (source != null) ..._endpointLines(context, context.t('analytics.source'), source),
     if (destination != null) ..._endpointLines(context, context.t('analytics.destination'), destination),
-    if (remote != null && !_sameEndpoint(remote, source) && !_sameEndpoint(remote, destination)) ..._endpointLines(context, context.t('analytics.remote'), remote),
   ];
-}
-
-bool _sameEndpoint(Map<String, dynamic>? left, Map<String, dynamic>? right) {
-  if (left == null || right == null) return false;
-  return left['address']?.toString() == right['address']?.toString() &&
-      left['ip']?.toString() == right['ip']?.toString() &&
-      left['host']?.toString() == right['host']?.toString();
 }
 
 List<Widget> _endpointLines(BuildContext context, String title, Map<String, dynamic> info) {

@@ -194,11 +194,9 @@ String? _endpointSummary(BuildContext context, Map<String, dynamic>? info) {
 List<Widget> _endpointDetailWidgets(BuildContext context, Map<String, dynamic> item) {
   final source = _endpointInfo(item, 'sourceInfo');
   final destination = _endpointInfo(item, 'destinationInfo');
-  final remote = _endpointInfo(item, 'remoteInfo');
   return [
     if (source != null) ..._endpointLines(context, context.t('analytics.source'), source),
     if (destination != null) ..._endpointLines(context, context.t('analytics.destination'), destination),
-    if (remote != null && !_sameEndpoint(remote, source) && !_sameEndpoint(remote, destination)) ..._endpointLines(context, context.t('analytics.remote'), remote),
   ];
 }
 
@@ -229,13 +227,6 @@ List<Widget> _endpointLines(BuildContext context, String title, Map<String, dyna
         ),
       ),
   ];
-}
-
-bool _sameEndpoint(Map<String, dynamic>? left, Map<String, dynamic>? right) {
-  if (left == null || right == null) return false;
-  return left['address']?.toString() == right['address']?.toString() &&
-      left['ip']?.toString() == right['ip']?.toString() &&
-      left['host']?.toString() == right['host']?.toString();
 }
 
 String _scopeLabel(BuildContext context, String? scope) {

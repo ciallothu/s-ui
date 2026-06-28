@@ -75,6 +75,8 @@ var (
 	connectionFromPattern   = regexp.MustCompile(`\bconnection\s+from\s+([^,\s]+)`)
 )
 
+const connectionSourceAttachWindow int64 = 10
+
 func ParseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
 	message := strings.TrimSpace(entry.Message)
 	matches := connectionPrefixPattern.FindStringSubmatch(message)
@@ -101,10 +103,6 @@ func ParseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
 	if from := connectionFromPattern.FindStringSubmatch(detail); len(from) > 1 {
 		result.Source = strings.TrimSpace(from[1])
 		result.SourceInfo = describeConnectionAddress(result.Source)
-		if result.Remote == "" {
-			result.Remote = result.Source
-			result.RemoteInfo = result.SourceInfo
-		}
 	}
 	return result, true
 }
@@ -116,15 +114,23 @@ func parseConnectionLog(entry logger.LogEntry) (ConnectionEntry, bool) {
 func (s *StatsService) QueryConnections(filter ConnectionFilter) (*ConnectionQueryResult, error) {
 	filter.Offset, filter.Limit = normalizePage(filter.Offset, filter.Limit, 2000)
 	logs, scanned := logger.QueryLogs(logger.LogQuery{
-		Level: "INFO", User: filter.User, Search: filter.Search,
+		Level: "INFO",
 		Start: filter.Start, End: filter.End, Limit: 5000,
 	})
 
-	items := make([]ConnectionEntry, 0, len(logs))
-	ownerBudget := NewConnectionOwnerLookupBudget(32)
+	parsed := make([]ConnectionEntry, 0, len(logs))
 	for _, logEntry := range logs {
 		item, ok := ParseConnectionLog(logEntry)
-		if !ok || !connectionMatches(item, filter) {
+		if ok {
+			parsed = append(parsed, item)
+		}
+	}
+	AttachConnectionSources(parsed)
+
+	items := make([]ConnectionEntry, 0, len(parsed))
+	ownerBudget := NewConnectionOwnerLookupBudget(32)
+	for _, item := range parsed {
+		if !connectionMatches(item, filter) {
 			continue
 		}
 		enrichConnectionEntryOwners(&item, ownerBudget)
@@ -144,6 +150,75 @@ func (s *StatsService) QueryConnections(filter ConnectionFilter) (*ConnectionQue
 		Items: page, Total: total, Offset: filter.Offset, Limit: filter.Limit,
 		Summary: summarizeConnections(items), Parsed: len(items), Scanned: scanned,
 	}, nil
+}
+
+func AttachConnectionSources(items []ConnectionEntry) {
+	index := buildConnectionSourceIndex(items)
+	for itemIndex := range items {
+		attachConnectionSource(&items[itemIndex], index)
+	}
+}
+
+func AttachConnectionSourceFromCandidates(item *ConnectionEntry, candidates []ConnectionEntry) {
+	if item == nil {
+		return
+	}
+	attachConnectionSource(item, buildConnectionSourceIndex(candidates))
+}
+
+func buildConnectionSourceIndex(items []ConnectionEntry) map[string][]ConnectionEntry {
+	index := make(map[string][]ConnectionEntry)
+	for _, item := range items {
+		if item.Source == "" {
+			continue
+		}
+		key := connectionSourceKey(item)
+		if key == "" {
+			continue
+		}
+		index[key] = append(index[key], item)
+	}
+	return index
+}
+
+func attachConnectionSource(item *ConnectionEntry, index map[string][]ConnectionEntry) {
+	if item.Source != "" || item.Destination == "" || item.Resource != "inbound" {
+		return
+	}
+	candidates := index[connectionSourceKey(*item)]
+	if len(candidates) == 0 {
+		return
+	}
+	bestIndex := -1
+	bestDelta := connectionSourceAttachWindow + 1
+	for candidateIndex, candidate := range candidates {
+		delta := absInt64(item.Timestamp - candidate.Timestamp)
+		if delta > connectionSourceAttachWindow || delta >= bestDelta {
+			continue
+		}
+		bestIndex = candidateIndex
+		bestDelta = delta
+	}
+	if bestIndex < 0 {
+		return
+	}
+	source := candidates[bestIndex]
+	item.Source = source.Source
+	item.SourceInfo = source.SourceInfo
+}
+
+func connectionSourceKey(item ConnectionEntry) string {
+	if item.Resource == "" || item.Protocol == "" || item.Tag == "" {
+		return ""
+	}
+	return strings.Join([]string{item.Resource, item.Protocol, item.Tag}, "\x00")
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func connectionMatches(item ConnectionEntry, filter ConnectionFilter) bool {
@@ -226,8 +301,8 @@ func summarizeConnections(items []ConnectionEntry) map[string][]ConnectionSummar
 		if item.User != "" {
 			add("users", "user", item.User, item.User, item.Timestamp)
 		}
-		if item.Remote != "" {
-			add("destinations", "destination", normalizeRemote(item.Remote), item.User, item.Timestamp)
+		if item.Destination != "" {
+			add("destinations", "destination", normalizeRemote(item.Destination), item.User, item.Timestamp)
 		}
 	}
 	result := make(map[string][]ConnectionSummary, len(maps))

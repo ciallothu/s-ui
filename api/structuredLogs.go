@@ -49,6 +49,18 @@ func (a *ApiService) queryStructuredLogs(level, user, search string, start, end 
 	}
 
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Timestamp > entries[j].Timestamp })
+	connectionCandidates := []service.ConnectionEntry{}
+	if level == "" || level == "ALL" || level == "INFO" {
+		candidateLogs, _ := logger.QueryLogs(logger.LogQuery{
+			Level: "INFO", Start: start, End: end, Limit: 5000,
+		})
+		for _, entry := range candidateLogs {
+			if connection, ok := service.ParseConnectionLog(entry); ok {
+				connectionCandidates = append(connectionCandidates, connection)
+			}
+		}
+		service.AttachConnectionSources(connectionCandidates)
+	}
 	total := len(entries)
 	if offset > total {
 		offset = total
@@ -62,6 +74,7 @@ func (a *ApiService) queryStructuredLogs(level, user, search string, start, end 
 	for _, entry := range entries[offset:pageEnd] {
 		item := structuredLogEntry{LogEntry: entry}
 		if connection, ok := service.ParseConnectionLog(entry); ok {
+			service.AttachConnectionSourceFromCandidates(&connection, connectionCandidates)
 			service.EnrichConnectionEntryOwnersWithBudget(&connection, ownerBudget)
 			if item.User == "" {
 				item.User = connection.User
