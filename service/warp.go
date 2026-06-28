@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/alireza0/s-ui/database/model"
-	"github.com/alireza0/s-ui/logger"
 	"github.com/alireza0/s-ui/util/common"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -31,10 +30,13 @@ func (s *WarpService) getWarpInfo(deviceId string, accessToken string) ([]byte, 
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
+	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, common.NewErrorf("warp API returned HTTP %d: %s", resp.StatusCode, readWarpResponse(resp))
+	}
 	buffer := bytes.NewBuffer(make([]byte, 8192))
 	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
@@ -64,10 +66,13 @@ func (s *WarpService) RegisterWarp(ep *model.Endpoint) error {
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
+	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return common.NewErrorf("warp registration returned HTTP %d: %s", resp.StatusCode, readWarpResponse(resp))
+	}
 	buffer := bytes.NewBuffer(make([]byte, 8192))
 	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
@@ -81,12 +86,12 @@ func (s *WarpService) RegisterWarp(ep *model.Endpoint) error {
 		return err
 	}
 
-	deviceId := rspData["id"].(string)
-	token := rspData["token"].(string)
-	license, ok := rspData["account"].(map[string]interface{})["license"].(string)
-	if !ok {
-		logger.Debug("Error accessing license value.")
-		return err
+	deviceId, _ := rspData["id"].(string)
+	token, _ := rspData["token"].(string)
+	account, _ := rspData["account"].(map[string]interface{})
+	license, _ := account["license"].(string)
+	if deviceId == "" || token == "" || license == "" {
+		return common.NewError("warp registration response is missing device credentials")
 	}
 
 	warpInfo, err := s.getWarpInfo(deviceId, token)
@@ -101,20 +106,31 @@ func (s *WarpService) RegisterWarp(ep *model.Endpoint) error {
 	}
 
 	warpConfig, _ := warpDetails["config"].(map[string]interface{})
+	if warpConfig == nil {
+		return common.NewError("warp device response is missing config")
+	}
 	clientId, _ := warpConfig["client_id"].(string)
 	reserved := s.getReserved(clientId)
 	interfaceConfig, _ := warpConfig["interface"].(map[string]interface{})
 	addresses, _ := interfaceConfig["addresses"].(map[string]interface{})
 	v4, _ := addresses["v4"].(string)
 	v6, _ := addresses["v6"].(string)
-	peer, _ := warpConfig["peers"].([]interface{})[0].(map[string]interface{})
-	peerEndpoint, _ := peer["endpoint"].(map[string]interface{})["host"].(string)
+	peersRaw, _ := warpConfig["peers"].([]interface{})
+	if len(peersRaw) == 0 {
+		return common.NewError("warp device response is missing peers")
+	}
+	peer, _ := peersRaw[0].(map[string]interface{})
+	endpoint, _ := peer["endpoint"].(map[string]interface{})
+	peerEndpoint, _ := endpoint["host"].(string)
 	peerEpAddress, peerEpPort, err := net.SplitHostPort(peerEndpoint)
 	if err != nil {
 		return err
 	}
 	peerPublicKey, _ := peer["public_key"].(string)
 	peerPort, _ := strconv.Atoi(peerEpPort)
+	if v4 == "" || v6 == "" || peerPublicKey == "" || peerPort == 0 {
+		return common.NewError("warp device response is incomplete")
+	}
 
 	peers := []map[string]interface{}{
 		{
@@ -182,6 +198,9 @@ func (s *WarpService) SetWarpLicense(old_license string, ep *model.Endpoint) err
 	if err != nil {
 		return err
 	}
+	if warpData["device_id"] == "" || warpData["access_token"] == "" {
+		return common.NewError("warp device credentials are missing")
+	}
 
 	if warpData["license_key"] == old_license {
 		return nil
@@ -202,6 +221,9 @@ func (s *WarpService) SetWarpLicense(old_license string, ep *model.Endpoint) err
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return common.NewErrorf("warp license update returned HTTP %d: %s", resp.StatusCode, readWarpResponse(resp))
+	}
 	buffer := bytes.NewBuffer(make([]byte, 8192))
 	buffer.Reset()
 	_, err = buffer.ReadFrom(resp.Body)
@@ -216,9 +238,20 @@ func (s *WarpService) SetWarpLicense(old_license string, ep *model.Endpoint) err
 
 	if success, ok := response["success"].(bool); ok && success == false {
 		errorArr, _ := response["errors"].([]interface{})
-		errorObj := errorArr[0].(map[string]interface{})
-		return common.NewError(errorObj["code"], errorObj["message"])
+		if len(errorArr) > 0 {
+			if errorObj, ok := errorArr[0].(map[string]interface{}); ok {
+				return common.NewError(errorObj["code"], errorObj["message"])
+			}
+		}
+		return common.NewError("warp license update failed")
 	}
 
 	return nil
+}
+
+func readWarpResponse(resp *http.Response) string {
+	buffer := bytes.NewBuffer(make([]byte, 1024))
+	buffer.Reset()
+	_, _ = buffer.ReadFrom(resp.Body)
+	return buffer.String()
 }

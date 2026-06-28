@@ -167,18 +167,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                         ),
                       )
                     : value is Map
-                        ? ListView(
-                            padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
-                            children: [
-                              Text(
-                                context.t('editor.visualHint'),
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                              ),
-                              const SizedBox(height: 10),
-                              ..._buildMap(value as Map<String, dynamic>, ''),
-                              _addFieldButton(value as Map, ''),
-                            ],
-                          )
+                        ? _buildVisualBody()
                         : EmptyState(label: context.t('editor.needObject')),
               ),
             ],
@@ -197,6 +186,27 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
         child: editor,
       ),
     );
+  }
+
+  Widget _buildVisualBody() {
+    try {
+      final root = _stringKeyMap(value as Map);
+      value = root;
+      return ListView(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 28),
+        children: [
+          Text(
+            context.t('editor.visualHint'),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+          ..._buildMap(root, ''),
+          _addFieldButton(root, ''),
+        ],
+      );
+    } catch (exception) {
+      return EmptyState(label: exception.toString(), icon: Icons.error_outline);
+    }
   }
 
   List<Widget> _buildMap(Map<String, dynamic> map, String path) {
@@ -344,7 +354,10 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
     final redacted = schema.isRedactedSecret(current);
     final canCopy = current.isNotEmpty && !redacted;
     final isPsk = key == 'pre_shared_key';
-    final canGeneratePair = key == 'private_key' || key == 'client_private_key' || key == 'public_key';
+    final rootType = value is Map ? (value as Map)['type']?.toString() : '';
+    final canGeneratePair = rootType == 'warp'
+        ? key == 'private_key'
+        : key == 'private_key' || key == 'client_private_key' || key == 'public_key';
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
@@ -535,7 +548,7 @@ class _VisualEditorDialogState extends State<VisualEditorDialog> {
                         ),
                       ],
                     ),
-                    if (list[index] is Map) ..._buildMap(Map<String, dynamic>.from(list[index] as Map)..also((map) => list[index] = map), '$path[$index]') else TextFormField(
+                    if (list[index] is Map) ..._buildMap(_stringKeyMap(list[index] as Map)..also((map) => list[index] = map), '$path[$index]') else TextFormField(
                       initialValue: list[index]?.toString() ?? '',
                       onChanged: (next) => list[index] = next,
                     ),
@@ -648,6 +661,14 @@ extension _Also<T> on T {
 
 dynamic _copy(dynamic value) => jsonDecode(jsonEncode(value));
 
+Map<String, dynamic> _stringKeyMap(Map<dynamic, dynamic> value) {
+  final result = <String, dynamic>{};
+  for (final entry in value.entries) {
+    result[entry.key.toString()] = entry.value;
+  }
+  return result;
+}
+
 bool boolValue(dynamic value) => value == true || value?.toString().toLowerCase() == 'true';
 
 String _lineValue(List<String> lines, String prefix) {
@@ -691,8 +712,11 @@ class VisualEditorSchema {
   bool isHiddenField(String key) => const {'private_key_set', 'client_private_key_set', 'pre_shared_key_set', 'pre_shared_key_clear'}.contains(key);
   bool isRedactedSecret(String value) => value == '[redacted]' || value.contains('•');
   bool isWireGuardKeyField(String path, String key, Map<dynamic, dynamic> parent, dynamic root) {
-    if (resource != 'endpoints' || root is! Map || root['type'] != 'wireguard') return false;
-    return const {'private_key', 'public_key', 'client_private_key', 'pre_shared_key'}.contains(key);
+    if (resource != 'endpoints' || root is! Map) return false;
+    final type = root['type']?.toString();
+    if (type == 'wireguard') return const {'private_key', 'public_key', 'client_private_key', 'pre_shared_key'}.contains(key);
+    if (type == 'warp') return const {'private_key', 'public_key', 'pre_shared_key'}.contains(key);
+    return false;
   }
 
   List<String>? optionsFor(String path, String key, Map<dynamic, dynamic> parent) {
@@ -747,7 +771,23 @@ class VisualEditorSchema {
     return next;
   }
 
-  bool isObjectList(String path) => path.endsWith('.peers') || path.endsWith('.users') || path.endsWith('.links') || path.endsWith('.rules') || path.endsWith('.rule_set') || path.endsWith('.servers') || path == 'peers' || path == 'users' || path == 'links' || path == 'rules' || path == 'rule_set' || path == 'servers';
+  bool isObjectList(String path) =>
+      path.endsWith('.peers') ||
+      path.endsWith('.users') ||
+      path.endsWith('.links') ||
+      path.endsWith('.rules') ||
+      path.endsWith('.rule_set') ||
+      path.endsWith('.servers') ||
+      path.endsWith('.verify_client_url') ||
+      path.endsWith('.mesh_with') ||
+      path == 'peers' ||
+      path == 'users' ||
+      path == 'links' ||
+      path == 'rules' ||
+      path == 'rule_set' ||
+      path == 'servers' ||
+      path == 'verify_client_url' ||
+      path == 'mesh_with';
 
   dynamic listItemDefault(String path, {dynamic root}) {
     if (path.endsWith('peers') || path == 'peers') {
@@ -775,6 +815,8 @@ class VisualEditorSchema {
     }
     if (path.endsWith('links') || path == 'links') return {'type': 'external', 'remark': '', 'uri': ''};
     if (path.endsWith('users') || path == 'users') return {'name': '', 'token': ''};
+    if (path.endsWith('verify_client_url') || path == 'verify_client_url') return {'url': ''};
+    if (path.endsWith('mesh_with') || path == 'mesh_with') return {'server': '', 'server_port': 443, 'tls': <String, dynamic>{}};
     if (path.endsWith('rule_set') || path == 'rule_set') return {'type': 'remote', 'tag': '', 'format': 'binary', 'url': ''};
     if (path.endsWith('rules') || path == 'rules') return {'action': 'route', 'outbound': '', 'invert': false};
     if (path.endsWith('servers') || path == 'servers') return {'type': 'local', 'tag': ''};
@@ -790,6 +832,23 @@ class VisualEditorSchema {
     if (path.endsWith('peers') || path.contains('peers[')) {
       if (root is Map && root['type'] == 'warp') return ['address', 'port', 'public_key', 'pre_shared_key', 'reserved', 'allowed_ips'];
       return ['name', 'peer_role', 'remote_endpoint_mode', 'public_key', 'client_private_key', 'pre_shared_key', 'assigned_ipv4', 'assigned_ipv6', 'remote_site_cidrs', 'local_site_cidrs', 'route_inbounds', 'client_allowed_ips', 'client_dns'];
+    }
+    if (resource == 'endpoints' && root is Map) {
+      if (root['type'] == 'warp') return ['address', 'private_key', 'listen_port', 'mtu', 'udp_timeout', 'workers', 'system', 'name', 'peers', 'ext'];
+      if (root['type'] == 'tailscale') return ['domain_resolver', 'state_directory', 'auth_key', 'control_url', 'ephemeral', 'hostname', 'accept_routes', 'exit_node', 'advertise_routes', 'relay_server_port', 'relay_server_static_endpoints', 'system_interface', 'udp_timeout'];
+    }
+    if (resource == 'services' && root is Map) {
+      switch (root['type']) {
+        case 'derp':
+          return ['listen', 'listen_port', 'config_path', 'tls_id', 'verify_client_endpoint', 'verify_client_url', 'home', 'mesh_with', 'mesh_psk', 'mesh_psk_file', 'stun'];
+        case 'ssm-api':
+          return ['listen', 'listen_port', 'tls_id', 'servers'];
+        case 'ocm':
+        case 'ccm':
+          return ['listen', 'listen_port', 'tls_id', 'credential_path', 'usages_path', 'users', 'headers', 'detour'];
+        case 'resolved':
+          return ['listen', 'listen_port'];
+      }
     }
     return ['type', 'tag', 'name', 'enabled', 'server', 'server_port', 'listen', 'listen_port', 'network', 'tls', 'transport', 'headers'];
   }
@@ -896,8 +955,8 @@ class VisualEditorSchema {
           'system': false,
           'peers': <dynamic>[],
         },
-        'warp': {'address': <String>[], 'private_key': '', 'listen_port': 0, 'mtu': 1420, 'peers': [{'address': '', 'port': 0, 'public_key': '', 'pre_shared_key': '', 'reserved': <int>[], 'allowed_ips': <String>[]}]},
-        'tailscale': {'domain_resolver': 'local', 'state_directory': '', 'auth_key': '', 'accept_routes': false, 'advertise_routes': <String>[]},
+        'warp': {'address': <String>[], 'private_key': '', 'listen_port': 0, 'mtu': 1420, 'peers': <dynamic>[], 'ext': {'license_key': ''}},
+        'tailscale': {'domain_resolver': 'local', 'accept_routes': false},
       };
       return {...base, ...?detail[type]};
     }
@@ -906,8 +965,8 @@ class VisualEditorSchema {
         'derp': {'listen': '::', 'listen_port': 8443, 'config_path': '', 'tls_id': 0},
         'resolved': {'listen': '::', 'listen_port': 53},
         'ssm-api': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'servers': <String, dynamic>{}},
-        'ocm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'users': <dynamic>[], 'headers': <String, dynamic>{}},
-        'ccm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'users': <dynamic>[], 'headers': <String, dynamic>{}},
+        'ocm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'credential_path': '', 'usages_path': '', 'users': <dynamic>[], 'headers': <String, dynamic>{}},
+        'ccm': {'listen': '::', 'listen_port': 8080, 'tls_id': 0, 'credential_path': '', 'usages_path': '', 'users': <dynamic>[], 'headers': <String, dynamic>{}},
       };
       return {'id': 0, 'type': type, 'tag': '', ...?detail[type]};
     }

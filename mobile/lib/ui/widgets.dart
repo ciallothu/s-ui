@@ -49,8 +49,6 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
   OverlayEntry? _overlayEntry;
   double _menuWidth = 0;
   double _menuHeight = 0;
-  double _menuLeft = 0;
-  double _menuTop = 0;
 
   bool get _isOpen => _overlayEntry != null;
 
@@ -78,13 +76,9 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
     final overlay = Overlay.of(context, rootOverlay: true).context.findRenderObject() as RenderBox?;
     if (overlay == null || !overlay.hasSize) return;
     final media = MediaQuery.of(context);
-    final topLeft = overlay.globalToLocal(target.localToGlobal(Offset.zero));
-    final bottomRight = overlay.globalToLocal(target.localToGlobal(Offset(target.size.width, target.size.height)));
     final targetBottom = target.localToGlobal(Offset(0, target.size.height)).dy;
     final availableBelow = media.size.height - media.padding.bottom - targetBottom - 8;
     _menuWidth = target.size.width;
-    _menuLeft = topLeft.dx.toDouble();
-    _menuTop = bottomRight.dy - 2;
     _menuHeight = math.min(
       math.min(widget.options.length, _selectMenuMaxRows) * _selectMenuRowHeight,
       math.max(_selectMenuRowHeight, availableBelow),
@@ -103,6 +97,8 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
   Widget _buildOverlay(BuildContext overlayContext) {
     final rtl = Directionality.of(context) == ui.TextDirection.rtl;
     final colors = Theme.of(context).colorScheme;
+    final followerAnchor = rtl ? Alignment.topRight : Alignment.topLeft;
+    final targetAnchor = rtl ? Alignment.bottomRight : Alignment.bottomLeft;
     return Stack(
       children: [
         Positioned.fill(
@@ -111,69 +107,77 @@ class _AnchoredSelectState<T> extends State<AnchoredSelect<T>> {
             onTap: _close,
           ),
         ),
-        Positioned(
-          left: rtl ? null : _menuLeft,
-          right: rtl ? (MediaQuery.sizeOf(overlayContext).width - _menuLeft - _menuWidth) : null,
-          top: _menuTop,
-          child: SizedBox(
-            key: const ValueKey('anchored-select-menu'),
-            width: _menuWidth,
-            height: _menuHeight,
-            child: Material(
-              color: colors.surfaceContainerHigh,
-              elevation: 8,
-              shadowColor: colors.shadow,
-              shape: RoundedRectangleBorder(
-                borderRadius: _selectMenuRadius,
-                side: BorderSide(color: colors.outlineVariant),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: MediaQuery.removePadding(
-                context: overlayContext,
-                removeTop: true,
-                removeBottom: true,
-                child: Scrollbar(
-                  controller: _scrollController,
-                  thumbVisibility: widget.options.length > _selectMenuMaxRows,
-                  interactive: true,
-                  thickness: 4,
-                  radius: const Radius.circular(8),
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: EdgeInsets.zero,
-                    primary: false,
-                    itemExtent: _selectMenuRowHeight,
-                    itemCount: widget.options.length,
-                    itemBuilder: (context, index) {
-                      final option = widget.options[index];
-                      final selected = option.value == widget.value;
-                      return DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: selected ? colors.secondaryContainer.withValues(alpha: .72) : null,
-                          border: index == widget.options.length - 1
-                              ? null
-                              : Border(bottom: BorderSide(color: colors.outlineVariant)),
-                        ),
-                        child: InkWell(
-                          onTap: () {
-                            _close();
-                            widget.onChanged(option.value);
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Row(
-                              children: [
-                                Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
-                                if (selected) ...[
-                                  const SizedBox(width: 8),
-                                  const Icon(Icons.check, size: 20),
-                                ],
-                              ],
+        Positioned.fill(
+          child: CompositedTransformFollower(
+            link: _layerLink,
+            showWhenUnlinked: false,
+            targetAnchor: targetAnchor,
+            followerAnchor: followerAnchor,
+            offset: const Offset(0, -1),
+            child: Align(
+              alignment: followerAnchor,
+              widthFactor: 1,
+              heightFactor: 1,
+              child: SizedBox(
+                key: const ValueKey('anchored-select-menu'),
+                width: _menuWidth,
+                height: _menuHeight,
+                child: Material(
+                  color: colors.surfaceContainerHigh,
+                  elevation: 8,
+                  shadowColor: colors.shadow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: _selectMenuRadius,
+                    side: BorderSide(color: colors.outlineVariant),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: MediaQuery.removePadding(
+                    context: overlayContext,
+                    removeTop: true,
+                    removeBottom: true,
+                    child: Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: widget.options.length > _selectMenuMaxRows,
+                      trackVisibility: widget.options.length > _selectMenuMaxRows,
+                      interactive: true,
+                      thickness: 4,
+                      radius: const Radius.circular(8),
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: EdgeInsets.zero,
+                        primary: false,
+                        itemExtent: _selectMenuRowHeight,
+                        itemCount: widget.options.length,
+                        itemBuilder: (context, index) {
+                          final option = widget.options[index];
+                          final selected = option.value == widget.value;
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: selected ? colors.secondaryContainer.withValues(alpha: .72) : null,
+                              border: index == widget.options.length - 1 ? null : Border(bottom: BorderSide(color: colors.outlineVariant)),
                             ),
-                          ),
-                        ),
-                      );
-                    },
+                            child: InkWell(
+                              onTap: () {
+                                _close();
+                                widget.onChanged(option.value);
+                              },
+                              child: Padding(
+                                padding: const EdgeInsetsDirectional.only(start: 12, end: 12),
+                                child: Row(
+                                  children: [
+                                    Expanded(child: Text(option.label, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                                    if (selected) ...[
+                                      const SizedBox(width: 8),
+                                      const Icon(Icons.check, size: 20),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   ),
                 ),
               ),
